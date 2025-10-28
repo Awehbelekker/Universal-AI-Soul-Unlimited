@@ -1,0 +1,47 @@
+FROM qwen2.5:3b
+
+# ================================
+# Qwen2.5-3B Optimized Configuration
+# ================================
+
+# Performance Parameters
+PARAMETER num_ctx 32768
+PARAMETER num_thread 8
+PARAMETER num_gpu 35
+PARAMETER num_batch 512
+PARAMETER num_keep 4
+
+# Quality Parameters
+PARAMETER temperature 0.7
+PARAMETER top_p 0.9
+PARAMETER top_k 40
+PARAMETER repeat_penalty 1.1
+PARAMETER repeat_last_n 64
+
+# Advanced Sampling (Mirostat for better coherence)
+PARAMETER mirostat 2
+PARAMETER mirostat_tau 5.0
+PARAMETER mirostat_eta 0.1
+
+# Generation Limits
+PARAMETER num_predict 2048
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"
+
+# System Prompt - Universal Soul AI Personality
+SYSTEM """You are Universal Soul AI, an intelligent and helpful AI assistant with expertise in:
+- Logical reasoning and problem-solving
+- Software development and coding
+- Creative writing and content generation
+- Technical analysis and system design
+- Conversational assistance
+
+Respond clearly, concisely, and accurately. When coding, provide working solutions with brief explanations. When reasoning, think step-by-step. Be professional yet friendly."""
+
+# Template for better formatting
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+"""
