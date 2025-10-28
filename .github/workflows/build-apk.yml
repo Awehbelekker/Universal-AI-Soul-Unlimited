@@ -2,80 +2,34 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
       
-    - name: Set up Python
+    - name: Set up Python 3.9
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11'
+        python-version: '3.9'
         
-    - name: Install Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: 'temurin'
-        java-version: '11'
-        
-    - name: Install system dependencies
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          git \
-          zip \
-          unzip \
-          openjdk-11-jdk \
-          python3-pip \
-          autoconf \
-          libtool \
-          pkg-config \
-          zlib1g-dev \
-          libncurses5-dev \
-          libncursesw5-dev \
-          libtinfo5 \
-          cmake \
-          libffi-dev \
-          libssl-dev \
-          automake \
-          ccache \
-          libltdl-dev
-          
-    - name: Install Cython and buildozer
-      run: |
-        pip3 install --upgrade pip
-        pip3 install --upgrade cython==0.29.33
-        pip3 install --upgrade buildozer
+        sudo apt-get install -y git zip unzip openjdk-11-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+        pip install --upgrade pip
+        pip install buildozer cython==0.29.33
         
-    - name: Cache buildozer directory
-      uses: actions/cache@v3
-      with:
-        path: .buildozer
-        key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
-        restore-keys: |
-          ${{ runner.os }}-buildozer-
-          
-    - name: Build APK with buildozer
+    - name: Build with buildozer
       run: |
-        buildozer -v android debug
+        yes | buildozer android debug || buildozer android debug
         
-    - name: Upload APK artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v3
       with:
-        name: universal-soul-ai-debug
+        name: universal-soul-ai-apk
         path: bin/*.apk
-        retention-days: 30
-        
-    - name: Get APK info
-      run: |
-        echo "📦 APK Build Complete!"
-        echo "Size: $(du -h bin/*.apk | cut -f1)"
-        echo "File: $(ls bin/*.apk)"
