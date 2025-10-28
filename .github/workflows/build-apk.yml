@@ -9,11 +9,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3
       
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -24,7 +24,7 @@ jobs:
       uses: actions/setup-java@v3
       with:
         distribution: 'temurin'
-        java-version: '17'
+        java-version: '11'
         
     - name: Install system dependencies
       run: |
@@ -33,7 +33,7 @@ jobs:
           git \
           zip \
           unzip \
-          openjdk-17-jdk \
+          openjdk-11-jdk \
           python3-pip \
           autoconf \
           libtool \
@@ -46,7 +46,8 @@ jobs:
           libffi-dev \
           libssl-dev \
           automake \
-          ccache
+          ccache \
+          libltdl-dev
           
     - name: Install Cython and buildozer
       run: |
