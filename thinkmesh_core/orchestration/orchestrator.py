@@ -95,7 +95,7 @@ class ThinkMeshOrchestrator:
         asyncio.create_task(self._process_task_queue())
 
         logger.info(
-            f"Orchestrator initialized with strategy: "
+            "Orchestrator initialized with strategy: "
             f"{self.strategy.value}"
         )
 

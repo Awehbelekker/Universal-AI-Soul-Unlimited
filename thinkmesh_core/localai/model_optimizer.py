@@ -3,12 +3,10 @@ ThinkMesh Core - Model Optimization Integration
 Integrates quantization, caching, and hardware acceleration
 """
 
-import asyncio
 import logging
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 from enum import Enum
-import json
 import hashlib
 import time
 
@@ -38,7 +36,7 @@ class QuantizationLevel(Enum):
 class ModelOptimizer:
     """
     Optimize AI models for maximum performance
-    
+
     Features:
     - Automatic quantization selection
     - KV cache management
@@ -46,16 +44,16 @@ class ModelOptimizer:
     - Hardware acceleration detection
     - Performance monitoring
     """
-    
+
     def __init__(self, cache_dir: str = "models/cache"):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # KV cache for faster repeated queries
         self.kv_cache: Dict[str, Any] = {}
         self.cache_hits = 0
         self.cache_misses = 0
-        
+
         # Performance metrics
         self.metrics = {
             'total_inferences': 0,
@@ -64,13 +62,13 @@ class ModelOptimizer:
             'avg_latency': 0.0,
             'optimizations_applied': []
         }
-        
+
         # Detect available hardware
         self.hardware_capabilities = self._detect_hardware()
-        
-        logger.info(f"ModelOptimizer initialized")
+
+        logger.info("ModelOptimizer initialized")
         logger.info(f"Hardware: {self.hardware_capabilities}")
-    
+
     def _detect_hardware(self) -> Dict[str, bool]:
         """Detect available hardware acceleration"""
         capabilities = {
@@ -81,28 +79,28 @@ class ModelOptimizer:
             'nnapi': False,
             'coreml': False
         }
-        
+
         try:
             import torch
             capabilities['cuda'] = torch.cuda.is_available()
         except ImportError:
             pass
-        
+
         # Check for Android NNAPI
         try:
             import sys
             if 'android' in sys.platform.lower():
                 capabilities['nnapi'] = True
-        except:
+        except Exception:
             pass
-        
+
         return capabilities
-    
+
     def _get_cache_key(self, prompt: str, model_id: str) -> str:
         """Generate cache key for prompt"""
         combined = f"{model_id}:{prompt}"
         return hashlib.md5(combined.encode()).hexdigest()
-    
+
     async def optimize_inference(
         self,
         model_id: str,
@@ -114,7 +112,7 @@ class ModelOptimizer:
     ) -> Dict[str, Any]:
         """
         Optimized inference with caching and performance tracking
-        
+
         Args:
             model_id: Model identifier
             prompt: Input prompt
@@ -122,31 +120,31 @@ class ModelOptimizer:
             quantization: Quantization level to use
             use_cache: Enable KV caching
             **kwargs: Additional inference parameters
-        
+
         Returns:
             Dict with response and performance metrics
         """
         start_time = time.time()
-        
+
         # Check KV cache
         cache_key = self._get_cache_key(prompt, model_id)
         if use_cache and cache_key in self.kv_cache:
             self.cache_hits += 1
             logger.info(f"Cache HIT for prompt: {prompt[:50]}...")
-            
+
             result = self.kv_cache[cache_key]
             result['cached'] = True
             result['latency'] = 0.001  # Cache retrieval is fast
-            
+
             return result
-        
+
         self.cache_misses += 1
-        
+
         # Apply optimizations
         optimized_kwargs = self._apply_optimizations(
             model_id, quantization, **kwargs
         )
-        
+
         # Run inference
         try:
             response = await inference_func(
@@ -154,9 +152,9 @@ class ModelOptimizer:
                 prompt=prompt,
                 **optimized_kwargs
             )
-            
+
             inference_time = time.time() - start_time
-            
+
             # Build result
             result = {
                 'response': response,
@@ -165,22 +163,22 @@ class ModelOptimizer:
                 'quantization': quantization.value,
                 'optimizations': self.metrics['optimizations_applied']
             }
-            
+
             # Update cache
             if use_cache:
                 self.kv_cache[cache_key] = result
-                
+
                 # Limit cache size
                 if len(self.kv_cache) > 100:
                     # Remove oldest entry
                     oldest_key = next(iter(self.kv_cache))
                     del self.kv_cache[oldest_key]
-            
+
             # Update metrics
             self._update_metrics(inference_time)
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Optimization error: {e}")
             # Fallback to standard inference
@@ -195,7 +193,7 @@ class ModelOptimizer:
                 'cached': False,
                 'error': str(e)
             }
-    
+
     def _apply_optimizations(
         self,
         model_id: str,
@@ -205,12 +203,12 @@ class ModelOptimizer:
         """Apply optimization parameters"""
         optimizations = []
         optimized_kwargs = kwargs.copy()
-        
+
         # Quantization
         if quantization != QuantizationLevel.NONE:
             optimized_kwargs['quantization'] = quantization.value
             optimizations.append(f"quantization:{quantization.value}")
-        
+
         # GPU acceleration
         if self.hardware_capabilities['cuda']:
             optimized_kwargs['device'] = 'cuda'
@@ -218,39 +216,39 @@ class ModelOptimizer:
         elif self.hardware_capabilities['nnapi']:
             optimized_kwargs['use_nnapi'] = True
             optimizations.append("gpu:nnapi")
-        
+
         # Batching for multiple prompts
         if 'prompts' in kwargs and len(kwargs['prompts']) > 1:
             optimized_kwargs['batch_size'] = min(len(kwargs['prompts']), 4)
             optimizations.append("batching")
-        
+
         # Context caching
         optimized_kwargs['use_mmap'] = True
         optimizations.append("mmap")
-        
+
         self.metrics['optimizations_applied'] = optimizations
-        
+
         return optimized_kwargs
-    
+
     def _update_metrics(self, inference_time: float):
         """Update performance metrics"""
         self.metrics['total_inferences'] += 1
         self.metrics['total_time'] += inference_time
-        
+
         total_requests = self.cache_hits + self.cache_misses
         if total_requests > 0:
             self.metrics['cache_hit_rate'] = self.cache_hits / total_requests
-        
+
         if self.metrics['total_inferences'] > 0:
             self.metrics['avg_latency'] = (
                 self.metrics['total_time'] / self.metrics['total_inferences']
             )
-    
+
     def clear_cache(self):
         """Clear KV cache"""
         self.kv_cache.clear()
         logger.info("KV cache cleared")
-    
+
     def get_metrics(self) -> Dict[str, Any]:
         """Get performance metrics"""
         return {
@@ -260,7 +258,7 @@ class ModelOptimizer:
             'cache_misses': self.cache_misses,
             'hardware': self.hardware_capabilities
         }
-    
+
     async def benchmark_model(
         self,
         model_id: str,
@@ -269,12 +267,12 @@ class ModelOptimizer:
     ) -> Dict[str, Any]:
         """
         Benchmark model with different optimization levels
-        
+
         Args:
             model_id: Model to benchmark
             inference_func: Inference function
             test_prompts: Custom test prompts
-        
+
         Returns:
             Benchmark results comparing optimization levels
         """
@@ -284,13 +282,13 @@ class ModelOptimizer:
                 "Explain quantum computing simply.",
                 "Write a haiku about technology."
             ]
-        
+
         results = {}
-        
+
         # Test each quantization level
         for quant in [QuantizationLevel.NONE, QuantizationLevel.Q8_0, QuantizationLevel.Q4_K_M]:
             logger.info(f"Testing {quant.value}...")
-            
+
             times = []
             for prompt in test_prompts:
                 start = time.time()
@@ -302,7 +300,7 @@ class ModelOptimizer:
                     use_cache=False  # Disable cache for fair comparison
                 )
                 times.append(time.time() - start)
-            
+
             avg_time = sum(times) / len(times)
             results[quant.value] = {
                 'avg_latency': avg_time,
@@ -310,13 +308,13 @@ class ModelOptimizer:
                 'max_latency': max(times),
                 'speedup': None
             }
-        
+
         # Calculate speedup vs non-quantized
         baseline = results[QuantizationLevel.NONE.value]['avg_latency']
         for quant in results:
             if quant != QuantizationLevel.NONE.value:
                 results[quant]['speedup'] = f"{baseline / results[quant]['avg_latency']:.2f}x"
-        
+
         return results
 
 

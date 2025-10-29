@@ -69,7 +69,7 @@ class AIProviderManager:
             return await self._fallback_generate(
                 prompt, exclude=[selected], **kwargs
             )
-    
+
     def _select_provider(self) -> Optional[str]:
         """Select best available provider"""
         active = [
@@ -113,7 +113,7 @@ class AIProviderManager:
                     continue
 
         raise RuntimeError("All providers failed")
-    
+
     def get_status(self) -> Dict:
         """Get status of all providers"""
         return {

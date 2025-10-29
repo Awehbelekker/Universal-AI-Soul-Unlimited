@@ -12,11 +12,11 @@ Features:
 - Optimized inference for mobile and desktop
 """
 
+from typing import Dict, Any, Optional
 import asyncio
 import time
 import psutil
 import platform
-from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -71,13 +71,13 @@ class CPTOSSIntegration:
     """
     CPT-OSS 20B integration with intelligent model selection
     """
-    
+
     def __init__(self):
         self.is_initialized = False
         self.device_capabilities: Optional[DeviceCapabilities] = None
         self.selected_tier: Optional[ModelTier] = None
         self.loaded_model: Optional[Any] = None
-        
+
         # Model configurations
         self.model_configs: Dict[ModelTier, ModelConfig] = {
             ModelTier.LIGHT: ModelConfig(
@@ -92,7 +92,7 @@ class CPTOSSIntegration:
             ModelTier.STANDARD: ModelConfig(
                 name="qwen2.5-3b",
                 tier=ModelTier.STANDARD,
-                model_path="models/qwen2.5-3b-q8.gguf",
+                model_path="models/qwen2.5-3b-q8.ggu",
                 quantization="Q8",
                 memory_required_gb=3.0,
                 context_window=32768,
@@ -101,7 +101,7 @@ class CPTOSSIntegration:
             ModelTier.ADVANCED: ModelConfig(
                 name="cpt-oss-20b-q4",
                 tier=ModelTier.ADVANCED,
-                model_path="models/cpt-oss-20b.Q4_K_M.gguf",
+                model_path="models/cpt-oss-20b.Q4_K_M.ggu",
                 quantization="Q4_K_M",
                 memory_required_gb=12.0,
                 context_window=8192,
@@ -110,46 +110,46 @@ class CPTOSSIntegration:
             ModelTier.PREMIUM: ModelConfig(
                 name="cpt-oss-20b-q8",
                 tier=ModelTier.PREMIUM,
-                model_path="models/cpt-oss-20b.Q8_0.gguf",
+                model_path="models/cpt-oss-20b.Q8_0.ggu",
                 quantization="Q8_0",
                 memory_required_gb=20.0,
                 context_window=8192,
                 max_tokens=4096
             )
         }
-    
+
     async def initialize(self) -> None:
         """Initialize the CPT-OSS integration"""
         try:
             logger.info("Initializing CPT-OSS 20B integration...")
-            
+
             # Detect device capabilities
             self.device_capabilities = await self._detect_device_capabilities()
-            
+
             # Select optimal model tier
             self.selected_tier = await self._select_optimal_tier()
-            
+
             # Load the selected model
             await self._load_model(self.selected_tier)
-            
+
             self.is_initialized = True
             logger.info(f"CPT-OSS integration initialized with tier: {self.selected_tier.value}")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize CPT-OSS integration: {e}")
             raise
-    
+
     async def _detect_device_capabilities(self) -> DeviceCapabilities:
         """Detect device hardware capabilities"""
         try:
             # Get system info
             memory = psutil.virtual_memory()
             disk = psutil.disk_usage('/')
-            
+
             # Detect platform
             system = platform.system()
             is_mobile = system in ['Android', 'iOS']
-            
+
             # Check for GPU (simplified check)
             has_gpu = False
             try:
@@ -157,7 +157,7 @@ class CPTOSSIntegration:
                 has_gpu = torch.cuda.is_available()
             except ImportError:
                 pass
-            
+
             # Get battery info (mobile only)
             battery_level = None
             is_charging = None
@@ -167,9 +167,9 @@ class CPTOSSIntegration:
                     if battery:
                         battery_level = int(battery.percent)
                         is_charging = battery.power_plugged
-                except:
+                except Exception:
                     pass
-            
+
             capabilities = DeviceCapabilities(
                 total_ram_gb=memory.total / (1024**3),
                 available_ram_gb=memory.available / (1024**3),
@@ -181,17 +181,17 @@ class CPTOSSIntegration:
                 battery_level=battery_level,
                 is_charging=is_charging
             )
-            
-            logger.info(f"Device capabilities detected:")
+
+            logger.info("Device capabilities detected:")
             logger.info(f"  RAM: {capabilities.available_ram_gb:.1f}GB / {capabilities.total_ram_gb:.1f}GB")
             logger.info(f"  CPU Cores: {capabilities.cpu_cores}")
             logger.info(f"  GPU: {capabilities.has_gpu}")
             logger.info(f"  Storage: {capabilities.storage_available_gb:.1f}GB")
             logger.info(f"  Platform: {capabilities.platform}")
             logger.info(f"  Mobile: {capabilities.is_mobile}")
-            
+
             return capabilities
-            
+
         except Exception as e:
             logger.error(f"Failed to detect device capabilities: {e}")
             # Return minimal capabilities as fallback
@@ -204,24 +204,24 @@ class CPTOSSIntegration:
                 platform="Unknown",
                 is_mobile=True
             )
-    
+
     async def _select_optimal_tier(self) -> ModelTier:
         """Select optimal model tier based on device capabilities"""
         if not self.device_capabilities:
             return ModelTier.LIGHT
-        
+
         caps = self.device_capabilities
-        
+
         # Check for PREMIUM tier (CPT-OSS 20B Q8)
-        if (caps.available_ram_gb >= 20 and 
+        if (caps.available_ram_gb >= 20 and
             caps.storage_available_gb >= 25 and
             not caps.is_mobile and
             caps.cpu_cores >= 8):
             logger.info("Device supports PREMIUM tier (CPT-OSS 20B Q8)")
             return ModelTier.PREMIUM
-        
+
         # Check for ADVANCED tier (CPT-OSS 20B Q4)
-        if (caps.available_ram_gb >= 12 and 
+        if (caps.available_ram_gb >= 12 and
             caps.storage_available_gb >= 15 and
             caps.cpu_cores >= 6):
             # Additional checks for mobile
@@ -236,32 +236,32 @@ class CPTOSSIntegration:
             else:
                 logger.info("Device supports ADVANCED tier (CPT-OSS 20B Q4)")
                 return ModelTier.ADVANCED
-        
+
         # Check for STANDARD tier (Qwen 3B)
         if caps.available_ram_gb >= 3 and caps.storage_available_gb >= 5:
             logger.info("Device supports STANDARD tier (Qwen2.5-3B)")
             return ModelTier.STANDARD
-        
+
         # Default to LIGHT tier (HRM 27M)
         logger.info("Device supports LIGHT tier (HRM-27M)")
         return ModelTier.LIGHT
-    
+
     async def _load_model(self, tier: ModelTier) -> None:
         """Load the model for the selected tier"""
         try:
             model_config = self.model_configs[tier]
             model_path = Path(model_config.model_path)
-            
+
             # Check if model file exists
             if not model_path.exists():
                 logger.warning(f"Model file not found: {model_path}")
-                logger.warning(f"Please download the model from Hugging Face:")
-                
+                logger.warning("Please download the model from Hugging Face:")
+
                 if tier == ModelTier.ADVANCED:
-                    logger.warning("  huggingface-cli download TheBloke/CPT-OSS-20B-GGUF cpt-oss-20b.Q4_K_M.gguf")
+                    logger.warning("  huggingface-cli download TheBloke/CPT-OSS-20B-GGUF cpt-oss-20b.Q4_K_M.ggu")
                 elif tier == ModelTier.PREMIUM:
-                    logger.warning("  huggingface-cli download TheBloke/CPT-OSS-20B-GGUF cpt-oss-20b.Q8_0.gguf")
-                
+                    logger.warning("  huggingface-cli download TheBloke/CPT-OSS-20B-GGUF cpt-oss-20b.Q8_0.ggu")
+
                 # Fallback to lower tier
                 if tier == ModelTier.PREMIUM:
                     logger.info("Falling back to ADVANCED tier")
@@ -272,21 +272,21 @@ class CPTOSSIntegration:
                 else:
                     logger.warning("Cannot load model, system will use fallback AI")
                 return
-            
+
             # Load model using llama-cpp-python
             try:
                 from llama_cpp import Llama
-                
+
                 # Calculate optimal settings
                 n_threads = max(1, self.device_capabilities.cpu_cores - 1)
                 n_batch = 512 if self.device_capabilities.available_ram_gb > 8 else 256
                 n_gpu_layers = 0  # CPU only for mobile compatibility
-                
+
                 logger.info(f"Loading {model_config.name} model...")
                 logger.info(f"  Threads: {n_threads}")
                 logger.info(f"  Batch size: {n_batch}")
                 logger.info(f"  Context window: {model_config.context_window}")
-                
+
                 self.loaded_model = Llama(
                     model_path=str(model_path),
                     n_ctx=model_config.context_window,
@@ -297,30 +297,30 @@ class CPTOSSIntegration:
                     use_mlock=False,
                     verbose=False
                 )
-                
+
                 logger.info(f"✅ Model loaded successfully: {model_config.name}")
-                
+
             except ImportError:
                 logger.error("llama-cpp-python not installed. Install with: pip install llama-cpp-python")
                 raise
-            
+
         except Exception as e:
             logger.error(f"Failed to load model for tier {tier.value}: {e}")
             raise
-    
+
     async def analyze_task_complexity(self, prompt: str) -> TaskComplexity:
         """Analyze task complexity to determine required model tier"""
         prompt_lower = prompt.lower()
-        
+
         # Expert level tasks
         expert_keywords = [
-            'research', 'analyze deeply', 'comprehensive analysis', 
+            'research', 'analyze deeply', 'comprehensive analysis',
             'strategic plan', 'architecture', 'system design',
             'write a paper', 'detailed report'
         ]
         if any(kw in prompt_lower for kw in expert_keywords):
             return TaskComplexity.EXPERT
-        
+
         # Advanced level tasks
         advanced_keywords = [
             'implement', 'create code', 'develop', 'build',
@@ -329,7 +329,7 @@ class CPTOSSIntegration:
         ]
         if any(kw in prompt_lower for kw in advanced_keywords):
             return TaskComplexity.ADVANCED
-        
+
         # Moderate level tasks
         moderate_keywords = [
             'explain', 'how does', 'what is', 'compare',
@@ -337,10 +337,10 @@ class CPTOSSIntegration:
         ]
         if any(kw in prompt_lower for kw in moderate_keywords):
             return TaskComplexity.MODERATE
-        
+
         # Default to simple
         return TaskComplexity.SIMPLE
-    
+
     async def intelligent_routing(self, prompt: str, privacy_mode: str = "balanced") -> Dict[str, Any]:
         """
         Intelligently route request to optimal model based on:
@@ -351,13 +351,13 @@ class CPTOSSIntegration:
         """
         if not self.is_initialized:
             await self.initialize()
-        
+
         # Analyze task complexity
         complexity = await self.analyze_task_complexity(prompt)
-        
+
         # Determine required tier
         required_tier = self._map_complexity_to_tier(complexity)
-        
+
         # Check privacy mode
         if privacy_mode == "strict":
             # Force local processing only
@@ -365,7 +365,7 @@ class CPTOSSIntegration:
         else:
             # Use best available tier
             selected_tier = min(required_tier, self.selected_tier, key=lambda t: list(ModelTier).index(t))
-        
+
         # Additional mobile checks
         if self.device_capabilities and self.device_capabilities.is_mobile:
             if self.device_capabilities.battery_level and self.device_capabilities.battery_level < 20:
@@ -376,14 +376,14 @@ class CPTOSSIntegration:
                 # Not charging, avoid heavy models
                 logger.info("Not charging, using STANDARD tier to preserve battery")
                 selected_tier = ModelTier.STANDARD
-        
+
         return {
             "selected_tier": selected_tier,
             "task_complexity": complexity,
             "model_config": self.model_configs[selected_tier],
             "device_capabilities": self.device_capabilities
         }
-    
+
     def _map_complexity_to_tier(self, complexity: TaskComplexity) -> ModelTier:
         """Map task complexity to required model tier"""
         complexity_tier_map = {
@@ -393,16 +393,16 @@ class CPTOSSIntegration:
             TaskComplexity.EXPERT: ModelTier.PREMIUM
         }
         return complexity_tier_map.get(complexity, ModelTier.STANDARD)
-    
-    async def generate(self, prompt: str, max_tokens: int = 512, 
+
+    async def generate(self, prompt: str, max_tokens: int = 512,
                       temperature: float = 0.7) -> str:
         """Generate text using the loaded model"""
         if not self.loaded_model:
             raise RuntimeError("Model not loaded. Call initialize() first.")
-        
+
         try:
             start_time = time.time()
-            
+
             # Generate response
             response = self.loaded_model(
                 prompt,
@@ -413,33 +413,33 @@ class CPTOSSIntegration:
                 repeat_penalty=1.1,
                 stop=["</s>", "Human:", "Assistant:"]
             )
-            
+
             # Extract text
             generated_text = response['choices'][0]['text']
-            
+
             # Calculate metrics
             generation_time = time.time() - start_time
             tokens_generated = response['usage']['completion_tokens']
             tokens_per_second = tokens_generated / generation_time if generation_time > 0 else 0
-            
-            logger.info(f"Generation complete:")
+
+            logger.info("Generation complete:")
             logger.info(f"  Tokens: {tokens_generated}")
             logger.info(f"  Time: {generation_time:.2f}s")
             logger.info(f"  Speed: {tokens_per_second:.1f} tokens/s")
-            
+
             return generated_text
-            
+
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             raise
-    
+
     async def get_model_info(self) -> Dict[str, Any]:
         """Get information about the current model"""
         if not self.selected_tier:
             return {"status": "not_initialized"}
-        
+
         config = self.model_configs[self.selected_tier]
-        
+
         return {
             "tier": self.selected_tier.value,
             "model_name": config.name,
@@ -469,10 +469,10 @@ async def auto_generate(prompt: str, privacy_mode: str = "balanced") -> str:
     """Auto-generate with intelligent model selection"""
     integration = await initialize_cpt_oss()
     routing_info = await integration.intelligent_routing(prompt, privacy_mode)
-    
+
     logger.info(f"Routing to tier: {routing_info['selected_tier'].value}")
     logger.info(f"Task complexity: {routing_info['task_complexity'].value}")
-    
+
     response = await integration.generate(prompt)
     return response
 
@@ -481,17 +481,17 @@ if __name__ == "__main__":
     # Test the integration
     async def test():
         print("Testing CPT-OSS 20B Integration...")
-        
+
         integration = CPTOSSIntegration()
         await integration.initialize()
-        
+
         # Get model info
         info = await integration.get_model_info()
-        print(f"\nModel Info:")
+        print("\nModel Info:")
         print(f"  Tier: {info['tier']}")
         print(f"  Model: {info['model_name']}")
         print(f"  Loaded: {info['is_loaded']}")
-        
+
         # Test prompts
         test_prompts = [
             ("Hello, how are you?", TaskComplexity.SIMPLE),
@@ -499,14 +499,14 @@ if __name__ == "__main__":
             ("Write a Python function to implement quicksort", TaskComplexity.ADVANCED),
             ("Design a distributed microservices architecture", TaskComplexity.EXPERT)
         ]
-        
+
         for prompt, expected_complexity in test_prompts:
             print(f"\n{'='*60}")
             print(f"Prompt: {prompt}")
-            
+
             routing = await integration.intelligent_routing(prompt)
             print(f"Complexity: {routing['task_complexity'].value}")
             print(f"Selected Tier: {routing['selected_tier'].value}")
             print(f"Expected: {expected_complexity.value}")
-    
+
     asyncio.run(test())
