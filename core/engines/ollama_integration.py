@@ -33,15 +33,15 @@ logger = logging.getLogger(__name__)
 class OllamaIntegration(BaseLLMProvider):
     """
     Ollama integration for local LLM inference.
-    
+
     Provides privacy-first inference with automatic model management.
-    
+
     Recommended models (in order of preference):
     - qwen2.5:3b (BEST) - 3B params, 32K context, superior reasoning
     - qwen2.5-coder:3b - Optimized for coding tasks
     - phi-2:latest - 2.7B params, fast but limited 2K context
     - mistral:7b-instruct - 7B params, more capable but slower
-    
+
     Qwen2.5-3B is recommended because:
     - 32K context window (vs 2K in phi-2) enables complex reasoning
     - Better instruction following for personality adaptation
@@ -49,7 +49,7 @@ class OllamaIntegration(BaseLLMProvider):
     - Latest model (Sept 2024) with best-in-class quality
     - Still fast and efficient for local inference
     """
-    
+
     def __init__(
         self,
         config: Optional[Config] = None,
@@ -58,7 +58,7 @@ class OllamaIntegration(BaseLLMProvider):
     ):
         """
         Initialize Ollama integration.
-        
+
         Args:
             config: Configuration object
             base_url: Ollama server URL (default: localhost:11434)
@@ -69,13 +69,13 @@ class OllamaIntegration(BaseLLMProvider):
         self.model_name = model_name
         self.client = httpx.AsyncClient(timeout=60.0)
         self.model_loaded = False
-        
+
         logger.info(f"Initialized Ollama integration with model: {model_name}")
-    
+
     async def initialize(self) -> bool:
         """
         Initialize Ollama connection and ensure model is available.
-        
+
         Returns:
             bool: True if initialization successful
         """
@@ -85,36 +85,39 @@ class OllamaIntegration(BaseLLMProvider):
             if response.status_code != 200:
                 logger.error("Ollama server not responding")
                 return False
-            
+
             # Check if model is available
             models = response.json().get("models", [])
-            model_exists = any(m.get("name") == self.model_name for m in models)
-            
+            model_exists = any(
+                m.get("name") == self.model_name for m in models)
+
             if not model_exists:
                 logger.info(f"Model {self.model_name} not found, pulling...")
                 await self.load_model(self.model_name)
-            
+
             self.model_loaded = True
-            logger.info(f"Ollama initialized successfully with {self.model_name}")
+            logger.info(
+                f"Ollama initialized successfully with {
+                    self.model_name}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize Ollama: {e}")
             return False
-    
+
     async def load_model(self, model_name: str) -> bool:
         """
         Load/pull a model from Ollama registry.
-        
+
         Args:
             model_name: Name of model to load (e.g., "phi-2:latest")
-            
+
         Returns:
             bool: True if model loaded successfully
         """
         try:
             logger.info(f"Pulling model: {model_name}")
-            
+
             async with self.client.stream(
                 "POST",
                 f"{self.base_url}/api/pull",
@@ -125,16 +128,16 @@ class OllamaIntegration(BaseLLMProvider):
                     if line:
                         # Log progress
                         logger.debug(f"Pull progress: {line}")
-            
+
             self.model_name = model_name
             self.model_loaded = True
             logger.info(f"Successfully loaded model: {model_name}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to load model {model_name}: {e}")
             return False
-    
+
     async def generate(
         self,
         prompt: str,
@@ -146,7 +149,7 @@ class OllamaIntegration(BaseLLMProvider):
     ) -> Dict[str, Any]:
         """
         Generate text using Ollama model.
-        
+
         Args:
             prompt: Input prompt
             max_tokens: Maximum tokens to generate
@@ -154,15 +157,15 @@ class OllamaIntegration(BaseLLMProvider):
             top_p: Nucleus sampling parameter
             stop_sequences: Optional stop sequences
             **kwargs: Additional generation parameters
-            
+
         Returns:
             Dict containing response, metadata, and timing
         """
         if not self.model_loaded:
             await self.initialize()
-        
+
         start_time = datetime.now()
-        
+
         try:
             request_data = {
                 "model": self.model_name,
@@ -174,46 +177,59 @@ class OllamaIntegration(BaseLLMProvider):
                     "top_p": top_p,
                 }
             }
-            
+
             if stop_sequences:
                 request_data["options"]["stop"] = stop_sequences
-            
+
             # Add any additional kwargs to options
             request_data["options"].update(kwargs)
-            
+
             response = await self.client.post(
                 f"{self.base_url}/api/generate",
                 json=request_data
             )
-            
+
             if response.status_code != 200:
                 raise Exception(f"Ollama API error: {response.status_code}")
-            
+
             data = response.json()
             elapsed = (datetime.now() - start_time).total_seconds()
-            
+
             result = {
-                "response": data.get("response", ""),
+                "response": data.get(
+                    "response",
+                    ""),
                 "success": True,
                 "model": self.model_name,
                 "elapsed_time": elapsed,
-                "tokens_generated": data.get("eval_count", 0),
-                "tokens_per_second": data.get("eval_count", 0) / elapsed if elapsed > 0 else 0,
+                "tokens_generated": data.get(
+                    "eval_count",
+                    0),
+                "tokens_per_second": data.get(
+                    "eval_count",
+                    0) / elapsed if elapsed > 0 else 0,
                 "metadata": {
-                    "total_duration": data.get("total_duration", 0),
-                    "load_duration": data.get("load_duration", 0),
-                    "prompt_eval_count": data.get("prompt_eval_count", 0),
-                    "eval_count": data.get("eval_count", 0),
-                }
-            }
-            
+                    "total_duration": data.get(
+                        "total_duration",
+                        0),
+                    "load_duration": data.get(
+                        "load_duration",
+                        0),
+                    "prompt_eval_count": data.get(
+                        "prompt_eval_count",
+                        0),
+                    "eval_count": data.get(
+                        "eval_count",
+                        0),
+                }}
+
             logger.info(
                 f"Generated {result['tokens_generated']} tokens in {elapsed:.2f}s "
                 f"({result['tokens_per_second']:.1f} tok/s)"
             )
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             return {
@@ -222,7 +238,7 @@ class OllamaIntegration(BaseLLMProvider):
                 "error": str(e),
                 "elapsed_time": (datetime.now() - start_time).total_seconds()
             }
-    
+
     async def generate_hrm_response(
         self,
         prompt: str,
@@ -232,37 +248,37 @@ class OllamaIntegration(BaseLLMProvider):
     ) -> Dict[str, Any]:
         """
         Generate HRM (Hierarchical Reasoning Model) response.
-        
+
         Optimized for Universal Soul AI's HRM engine with personality support.
-        
+
         Args:
             prompt: User prompt
             personality: Personality mode (professional, friendly, energetic, etc.)
             context: Optional context dictionary
             max_tokens: Maximum tokens to generate
-            
+
         Returns:
             Dict containing response and metadata
         """
         # Adjust generation parameters based on personality
         personality_params = self._get_personality_params(personality)
-        
+
         # Build system prompt with personality
         system_prompt = self._build_system_prompt(personality, context)
         full_prompt = f"{system_prompt}\n\nUser: {prompt}\n\nAssistant:"
-        
+
         result = await self.generate(
             prompt=full_prompt,
             max_tokens=max_tokens,
             **personality_params
         )
-        
+
         if result["success"]:
             result["personality"] = personality
             result["context_used"] = context is not None
-        
+
         return result
-    
+
     def _get_personality_params(self, personality: str) -> Dict[str, float]:
         """Get generation parameters based on personality mode."""
         params = {
@@ -274,7 +290,7 @@ class OllamaIntegration(BaseLLMProvider):
             "analytical": {"temperature": 0.55, "top_p": 0.82},
         }
         return params.get(personality, params["professional"])
-    
+
     def _build_system_prompt(
         self,
         personality: str,
@@ -282,7 +298,7 @@ class OllamaIntegration(BaseLLMProvider):
     ) -> str:
         """Build system prompt with personality and context."""
         base_prompt = "You are Universal Soul AI, a helpful AI assistant. "
-        
+
         personality_prompts = {
             "professional": "You are professional, clear, and concise in your responses.",
             "friendly": "You are warm, approachable, and conversational.",
@@ -291,31 +307,32 @@ class OllamaIntegration(BaseLLMProvider):
             "creative": "You are imaginative, expressive, and innovative.",
             "analytical": "You are precise, logical, and detail-oriented.",
         }
-        
+
         prompt = base_prompt + personality_prompts.get(
             personality,
             personality_prompts["professional"]
         )
-        
+
         if context:
             prompt += f"\n\nContext: {context.get('summary', '')}"
-        
+
         return prompt
-    
+
     async def health_check(self) -> Dict[str, Any]:
         """
         Check health status of Ollama integration.
-        
+
         Returns:
             Dict containing health status and diagnostics
         """
         try:
             response = await self.client.get(f"{self.base_url}/api/tags")
-            
+
             if response.status_code == 200:
                 models = response.json().get("models", [])
-                model_loaded = any(m.get("name") == self.model_name for m in models)
-                
+                model_loaded = any(
+                    m.get("name") == self.model_name for m in models)
+
                 return {
                     "status": "healthy",
                     "ollama_running": True,
@@ -329,14 +346,14 @@ class OllamaIntegration(BaseLLMProvider):
                     "ollama_running": False,
                     "error": f"Status code: {response.status_code}"
                 }
-                
+
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "ollama_running": False,
                 "error": str(e)
             }
-    
+
     async def cleanup(self):
         """Cleanup resources."""
         await self.client.aclose()
@@ -350,19 +367,20 @@ async def create_ollama_provider(
 ) -> OllamaIntegration:
     """
     Create and optionally initialize an Ollama provider.
-    
+
     Args:
         model_name: Model to use
         auto_initialize: Whether to auto-initialize
-        
+
     Returns:
         OllamaIntegration instance
     """
     provider = OllamaIntegration(model_name=model_name)
-    
+
     if auto_initialize:
         success = await provider.initialize()
         if not success:
-            logger.warning("Failed to initialize Ollama - may need manual setup")
-    
+            logger.warning(
+                "Failed to initialize Ollama - may need manual setup")
+
     return provider
