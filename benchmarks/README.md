@@ -15,31 +15,91 @@ Comprehensive benchmarking system for evaluating AI models using industry-standa
 - **Format**: Complete realistic scenarios with most likely continuation
 - **Metrics**: Accuracy, reasoning quality, latency
 
+### 3. ARC (AI2 Reasoning Challenge) ✨ NEW
+- **Purpose**: Test scientific reasoning and world knowledge
+- **Variants**: ARC-Easy and ARC-Challenge
+- **Categories**: Physics, Chemistry, Biology, Earth Science
+- **Format**: Grade 3-12 science exam questions
+- **Metrics**: Accuracy per variant, category breakdown
+
+### 4. TruthfulQA ✨ NEW
+- **Purpose**: Evaluate truthfulness and detect misconceptions
+- **Categories**: Health, Science, Law, Misconceptions
+- **Format**: Questions designed to elicit common false beliefs
+- **Metrics**: Accuracy, misconception rate
+
+### 5. GSM8K (Grade School Math) ✨ NEW
+- **Purpose**: Mathematical reasoning through word problems
+- **Categories**: Arithmetic, Ratios, Geometry, Multi-step problems
+- **Format**: Grade school level math word problems
+- **Metrics**: Accuracy, category performance, numeric extraction quality
+
 ## 🚀 Quick Start
 
 ### Install Dependencies
 
 ```bash
-pip install llama-cpp-python requests
+pip install requests asyncio aiohttp
+# For local models (optional)
+pip install llama-cpp-python
 ```
 
-### Run Benchmarks
+### Run All Benchmarks on Qwen Models
 
 ```bash
-# Run on all available models
-python benchmarks/run_baseline_benchmarks.py
+# Comprehensive test on all Qwen models (3B, 7B, 14B)
+python benchmarks/run_comprehensive_benchmarks.py
 
-# Run on specific model (coming soon)
-python benchmarks/run_baseline_benchmarks.py --model <model_name>
+# Quick test on Qwen 3B with new benchmarks
+python benchmarks/run_qwen_new_benchmarks.py
+
+# Legacy MMLU + HellaSwag on Qwen
+python benchmarks/run_qwen_benchmarks.py
+```
+
+### Run Individual Benchmarks
+
+```python
+import asyncio
+from arc_benchmark import ARCBenchmark
+from truthfulqa_benchmark import TruthfulQABenchmark
+from gsm8k_benchmark import GSM8KBenchmark
+
+async def your_inference_fn(prompt: str) -> str:
+    # Your model inference logic
+    return "A"
+
+# Run ARC-Challenge
+benchmark = ARCBenchmark(num_samples=50, variant="challenge")
+result = await benchmark.run_benchmark(your_inference_fn, "YourModel")
+print(f"Accuracy: {result.accuracy}%")
+```
+
+### Check GPU Optimization
+
+```bash
+# View GPU status and optimization recommendations
+python benchmarks/gpu_optimization.py
 ```
 
 ## 📁 Project Structure
 
 ```
 benchmarks/
-├── ai_benchmark_suite.py         # Core benchmark implementations
-├── run_baseline_benchmarks.py    # Orchestrator for running all benchmarks
-└── benchmark_results/            # JSON results for each run
+├── ai_benchmark_suite.py              # MMLU + HellaSwag implementation
+├── arc_benchmark.py                   # ARC (Easy + Challenge) ✨ NEW
+├── truthfulqa_benchmark.py            # TruthfulQA ✨ NEW
+├── gsm8k_benchmark.py                 # Grade School Math ✨ NEW
+├── gpu_optimization.py                # GPU/memory optimization ✨ NEW
+├── run_comprehensive_benchmarks.py    # All benchmarks, all models ✨ NEW
+├── run_qwen_new_benchmarks.py         # New benchmarks on Qwen 3B ✨ NEW
+├── run_qwen_benchmarks.py             # MMLU + HellaSwag on Qwen
+├── run_baseline_benchmarks.py         # Original baseline runner
+├── test_new_benchmarks.py             # Unit tests for new benchmarks
+├── README.md                          # This file
+├── QWEN_RESULTS.md                    # Detailed Qwen 3B analysis
+├── FINE_TUNING_GUIDE.md              # Fine-tuning strategies ✨ NEW
+└── benchmark_results/                 # JSON results directory
 ```
 
 ## 📈 Baseline Results
