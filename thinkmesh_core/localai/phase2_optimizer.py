@@ -72,7 +72,9 @@ class Phase2Optimizer:
         if platform.system() == 'Darwin':
             try:
                 import torch
-                if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                has_mps = (hasattr(torch.backends, 'mps') and
+                           torch.backends.mps.is_available())
+                if has_mps:
                     accelerators[AcceleratorType.METAL.value] = True
                     accelerators[AcceleratorType.COREML.value] = True
             except Exception:
@@ -281,7 +283,10 @@ class Phase2Optimizer:
         Returns:
             Batching configuration
         """
-        logger.info(f"Enabling dynamic batching (max_batch_size={max_batch_size})")
+        logger.info(
+            f"Enabling dynamic batching "
+            f"(max_batch_size={max_batch_size})"
+        )
 
         return {
             'status': 'enabled',
