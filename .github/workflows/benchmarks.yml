@@ -1,13 +1,16 @@
 name: AI Model Benchmarks
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'benchmarks/**'
-      - '.github/workflows/benchmarks.yml'
+  # Disabled auto-run on push to avoid conflicts with APK builds
+  # push:
+  #   branches: [ main, develop ]
+  #   paths:
+  #     - 'benchmarks/**'
+  #     - '.github/workflows/benchmarks.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'benchmarks/**'
   schedule:
     # Run weekly on Sundays at 00:00 UTC
     - cron: '0 0 * * 0'
