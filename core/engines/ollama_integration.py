@@ -17,20 +17,30 @@ Date: October 2025
 """
 
 import asyncio
+import json
 import httpx
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable, AsyncIterator
 from pathlib import Path
 import logging
 from datetime import datetime
 
-from ..interfaces.base import BaseLLMProvider
 from ..config import Config
 
 
 logger = logging.getLogger(__name__)
 
 
-class OllamaIntegration(BaseLLMProvider):
+def _model_available(models: List[Dict[str, Any]], model_name: str) -> bool:
+    """Match Ollama model tags (exact or name without tag)."""
+    base = model_name.split(":")[0]
+    for m in models:
+        name = m.get("name", "")
+        if name == model_name or name.startswith(f"{base}:"):
+            return True
+    return False
+
+
+class OllamaIntegration:
     """
     Ollama integration for local LLM inference.
 
@@ -88,8 +98,7 @@ class OllamaIntegration(BaseLLMProvider):
 
             # Check if model is available
             models = response.json().get("models", [])
-            model_exists = any(
-                m.get("name") == self.model_name for m in models)
+            model_exists = _model_available(models, self.model_name)
 
             if not model_exists:
                 logger.info(f"Model {self.model_name} not found, pulling...")
@@ -97,8 +106,7 @@ class OllamaIntegration(BaseLLMProvider):
 
             self.model_loaded = True
             logger.info(
-                f"Ollama initialized successfully with {
-                    self.model_name}")
+                f"Ollama initialized successfully with {self.model_name}")
             return True
 
         except Exception as e:
@@ -239,6 +247,52 @@ class OllamaIntegration(BaseLLMProvider):
                 "elapsed_time": (datetime.now() - start_time).total_seconds()
             }
 
+    async def generate_stream(
+        self,
+        prompt: str,
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        stop_sequences: Optional[List[str]] = None,
+        **kwargs,
+    ) -> AsyncIterator[str]:
+        """Stream text tokens from Ollama as they are generated."""
+        if not self.model_loaded:
+            await self.initialize()
+
+        request_data = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": True,
+            "options": {
+                "num_predict": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+            },
+        }
+
+        if stop_sequences:
+            request_data["options"]["stop"] = stop_sequences
+        request_data["options"].update(kwargs)
+
+        async with self.client.stream(
+            "POST",
+            f"{self.base_url}/api/generate",
+            json=request_data,
+        ) as response:
+            if response.status_code != 200:
+                raise Exception(f"Ollama API error: {response.status_code}")
+
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                data = json.loads(line)
+                chunk = data.get("response", "")
+                if chunk:
+                    yield chunk
+                if data.get("done"):
+                    break
+
     async def generate_hrm_response(
         self,
         prompt: str,
@@ -279,6 +333,52 @@ class OllamaIntegration(BaseLLMProvider):
 
         return result
 
+    async def generate_hrm_response_stream(
+        self,
+        prompt: str,
+        personality: str = "professional",
+        context: Optional[Dict[str, Any]] = None,
+        max_tokens: int = 512,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Any]:
+        """Stream an HRM response token-by-token."""
+        personality_params = self._get_personality_params(personality)
+        system_prompt = self._build_system_prompt(personality, context)
+        full_prompt = f"{system_prompt}\n\nUser: {prompt}\n\nAssistant:"
+
+        start_time = datetime.now()
+        parts: List[str] = []
+
+        try:
+            async for chunk in self.generate_stream(
+                prompt=full_prompt,
+                max_tokens=max_tokens,
+                **personality_params,
+            ):
+                parts.append(chunk)
+                if on_token:
+                    on_token(chunk)
+
+            elapsed = (datetime.now() - start_time).total_seconds()
+            text = "".join(parts)
+            return {
+                "response": text,
+                "success": True,
+                "model": self.model_name,
+                "elapsed_time": elapsed,
+                "tokens_generated": len(parts),
+                "personality": personality,
+                "context_used": context is not None,
+            }
+        except Exception as e:
+            logger.error(f"Streaming generation failed: {e}")
+            return {
+                "response": "".join(parts),
+                "success": False,
+                "error": str(e),
+                "elapsed_time": (datetime.now() - start_time).total_seconds(),
+            }
+
     def _get_personality_params(self, personality: str) -> Dict[str, float]:
         """Get generation parameters based on personality mode."""
         params = {
@@ -312,9 +412,19 @@ class OllamaIntegration(BaseLLMProvider):
             personality,
             personality_prompts["professional"]
         )
+        prompt += (
+            "\n\nReply directly to the user in natural language. "
+            "Do not show reasoning steps, layer labels, analysis headings, "
+            "or meta-commentary unless the user explicitly asks how you think."
+        )
 
         if context:
-            prompt += f"\n\nContext: {context.get('summary', '')}"
+            layer = context.get("layer")
+            layer_name = context.get("layer_name")
+            if layer and layer_name:
+                prompt += f"\n\n(Internal reasoning step {layer}: {layer_name} — keep output concise.)"
+            elif context.get("summary"):
+                prompt += f"\n\nContext: {context.get('summary', '')}"
 
         return prompt
 
@@ -330,8 +440,7 @@ class OllamaIntegration(BaseLLMProvider):
 
             if response.status_code == 200:
                 models = response.json().get("models", [])
-                model_loaded = any(
-                    m.get("name") == self.model_name for m in models)
+                model_loaded = _model_available(models, self.model_name)
 
                 return {
                     "status": "healthy",

@@ -10,8 +10,9 @@ Enhanced with Ollama/Llama.cpp backend support for actual model inference.
 
 import asyncio
 import json
+import logging
 import time
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from core.interfaces.data_structures import (
 )
 from core.interfaces.exceptions import HRMEngineError, handle_async_exception
 from core.config import get_config
+
+logger = logging.getLogger(__name__)
 
 # Import optimized backends
 try:
@@ -114,7 +117,7 @@ class HRMEngine(IAIEngine):
             await self._initialize_values_processing()
 
             self.is_initialized = True
-            print("HRM Engine initialized successfully with 27M parameters")
+            logger.info("HRM Engine initialized successfully with 27M parameters")
             return True
 
         except Exception as e:
@@ -124,7 +127,14 @@ class HRMEngine(IAIEngine):
             )
 
     @handle_async_exception
-    async def process_request(self, request: str, context: UserContext) -> str:
+    async def process_request(
+        self,
+        request: str,
+        context: UserContext,
+        reasoning_depth: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> str:
         """Process a user request through hierarchical reasoning"""
         if not self.is_initialized:
             await self.initialize()
@@ -132,22 +142,33 @@ class HRMEngine(IAIEngine):
         start_time = time.time()
         self.total_requests += 1
 
+        depth = reasoning_depth if reasoning_depth is not None else self.config.reasoning_depth
+        tokens = max_tokens if max_tokens is not None else self.config.layer_max_tokens
+
         try:
-            # Create HRM request
             hrm_request = HRMRequest(
                 user_input=request,
                 context=context,
-                reasoning_depth=self.config.reasoning_depth,
+                reasoning_depth=depth,
+                max_tokens=tokens,
                 use_values=self.values_integration,
-                use_personality=True
+                use_personality=True,
             )
 
-            # Process through hierarchical reasoning
-            response = await self._hierarchical_reasoning(hrm_request)
+            if (
+                depth == 1
+                and self.backend
+                and self.backend_type in ("ollama", "llama_cpp")
+            ):
+                hrm_response = await self._direct_chat(
+                    hrm_request, on_token=on_token
+                )
+            else:
+                hrm_response = await self._hierarchical_reasoning(hrm_request)
 
             # Apply personality and values
             final_response = await self._apply_personality_and_values(
-                response, context
+                hrm_response.response_text, context
             )
 
             # Update metrics
@@ -165,9 +186,13 @@ class HRMEngine(IAIEngine):
                 False)
 
             raise HRMEngineError(
-                f"Failed to process request: {
-                    str(e)}", "PROCESSING_FAILED", context={
-                    "request": request, "processing_time": processing_time})
+                f"Failed to process request: {str(e)}",
+                "PROCESSING_FAILED",
+                context={
+                    "request": request,
+                    "processing_time": processing_time,
+                },
+            )
 
     async def get_capabilities(self) -> List[str]:
         """Get HRM engine capabilities"""
@@ -221,15 +246,15 @@ class HRMEngine(IAIEngine):
 
                 success = await self.backend.initialize()
                 if success:
-                    print(f"✅ Ollama backend initialized: {model_name}")
+                    logger.info("Ollama backend initialized: %s", model_name)
                     self.model = f"OLLAMA_{model_name}"
                     return
                 else:
-                    print("⚠️ Ollama initialization failed, falling back")
+                    logger.warning("Ollama initialization failed, falling back")
                     self.backend_type = "placeholder"
 
             except Exception as e:
-                print(f"⚠️ Ollama backend error: {e}, using placeholder")
+                logger.warning("Ollama backend error: %s, using placeholder", e)
                 self.backend_type = "placeholder"
 
         # Initialize Llama.cpp backend
@@ -239,22 +264,22 @@ class HRMEngine(IAIEngine):
 
                 model_path = Path(self.config.model_path)
                 if not model_path.exists():
-                    print(f"⚠️ Model not found: {model_path}")
+                    logger.warning("Model not found: %s", model_path)
                     self.backend_type = "placeholder"
                 else:
                     self.backend = LlamaCppOptimizer(model_path=model_path)
                     success = await self.backend.initialize()
                     if success:
-                        print(f"✅ Llama.cpp backend initialized")
+                        logger.info("Llama.cpp backend initialized")
                         self.model = f"LLAMA_CPP_{model_path.name}"
                         return
 
             except Exception as e:
-                print(f"⚠️ Llama.cpp backend error: {e}, using placeholder")
+                logger.warning("Llama.cpp backend error: %s, using placeholder", e)
                 self.backend_type = "placeholder"
 
         # Fallback to placeholder
-        print("ℹ️ Using placeholder 27M parameter model")
+        logger.info("Using placeholder 27M parameter model")
         self.model = "PLACEHOLDER_27M_MODEL"
         self.tokenizer = "PLACEHOLDER_TOKENIZER"
 
@@ -298,6 +323,45 @@ class HRMEngine(IAIEngine):
             "wisdom": 0.1
         }
 
+    async def _direct_chat(
+        self,
+        request: HRMRequest,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> HRMResponse:
+        """Single-pass direct reply for fast chat (no visible reasoning layers)."""
+        response = HRMResponse(request_id=request.request_id)
+        personality = request.context.personality_mode.value.lower()
+
+        if self.backend_type == "ollama":
+            if on_token:
+                result = await self.backend.generate_hrm_response_stream(
+                    prompt=request.user_input,
+                    personality=personality,
+                    max_tokens=request.max_tokens,
+                    on_token=on_token,
+                )
+            else:
+                result = await self.backend.generate_hrm_response(
+                    prompt=request.user_input,
+                    personality=personality,
+                    max_tokens=request.max_tokens,
+                )
+            text = result.get("response", "").strip()
+        elif self.backend_type == "llama_cpp":
+            result = await self.backend.generate(
+                prompt=request.user_input,
+                max_tokens=request.max_tokens,
+            )
+            text = result.get("response", "").strip()
+        else:
+            text = await self._process_reasoning_layer(
+                request.user_input, 1, "surface_understanding", request.context
+            )
+
+        response.response_text = text
+        response.confidence = 0.85
+        return response
+
     async def _hierarchical_reasoning(
         self,
         request: HRMRequest
@@ -305,41 +369,52 @@ class HRMEngine(IAIEngine):
         """Perform hierarchical reasoning through multiple layers"""
         response = HRMResponse(request_id=request.request_id)
         current_input = request.user_input
+        internal_notes: List[str] = []
 
-        # Process through each reasoning layer
         for layer in range(1, request.reasoning_depth + 1):
             layer_name = self.reasoning_layers.get(layer, f"layer_{layer}")
             layer_weight = self.layer_weights.get(layer, 0.1)
+            is_final = layer == request.reasoning_depth
 
             start_time = time.time()
 
-            # Process using backend if available
-            if self.backend and self.backend_type in ["ollama", "llama_cpp"]:
+            if (
+                is_final
+                and self.backend
+                and self.backend_type in ("ollama", "llama_cpp")
+            ):
+                notes = "\n".join(internal_notes) if internal_notes else current_input
+                layer_result = await self._generate_user_reply(
+                    request.user_input,
+                    notes,
+                    request.context,
+                    max_tokens=request.max_tokens,
+                )
+            elif self.backend and self.backend_type in ("ollama", "llama_cpp"):
                 layer_result = await self._process_with_backend(
                     current_input,
                     layer,
                     layer_name,
-                    request.context
+                    request.context,
+                    max_tokens=request.max_tokens,
                 )
             else:
-                # Fallback to placeholder processing
                 layer_result = await self._process_reasoning_layer(
                     current_input, layer, layer_name, request.context
                 )
 
             processing_time = time.time() - start_time
 
-            # Add reasoning step to response
             response.add_reasoning_step(
                 step=layer_name,
                 result=layer_result,
-                confidence=layer_weight * 0.9  # Simulate confidence
+                confidence=layer_weight * 0.9,
             )
 
-            # Use output as input for next layer
-            current_input = layer_result
+            if not is_final:
+                internal_notes.append(layer_result)
+                current_input = layer_result
 
-        # Generate final response
         response.response_text = await self._generate_final_response(
             response.reasoning_chain, request
         )
@@ -360,7 +435,8 @@ class HRMEngine(IAIEngine):
         input_text: str,
         layer: int,
         layer_name: str,
-        context: UserContext
+        context: UserContext,
+        max_tokens: int = 256,
     ) -> str:
         """Process reasoning layer using Ollama or Llama.cpp backend"""
         try:
@@ -381,14 +457,14 @@ class HRMEngine(IAIEngine):
                     prompt=prompt,
                     personality=personality,
                     context={"layer": layer, "layer_name": layer_name},
-                    max_tokens=512
+                    max_tokens=max_tokens,
                 )
                 return result.get("response", input_text)
 
             elif self.backend_type == "llama_cpp":
                 result = await self.backend.generate(
                     prompt=prompt,
-                    max_tokens=512,
+                    max_tokens=max_tokens,
                     temperature=0.7,
                     top_p=0.9
                 )
@@ -405,6 +481,39 @@ class HRMEngine(IAIEngine):
                 layer_name,
                 context
             )
+
+    async def _generate_user_reply(
+        self,
+        user_input: str,
+        internal_notes: str,
+        context: UserContext,
+        max_tokens: int = 256,
+    ) -> str:
+        """Turn internal reasoning into a direct user-facing reply."""
+        prompt = self._build_final_reply_prompt(user_input, internal_notes)
+        personality = context.personality_mode.value.lower()
+
+        try:
+            if self.backend_type == "ollama":
+                result = await self.backend.generate_hrm_response(
+                    prompt=prompt,
+                    personality=personality,
+                    max_tokens=max_tokens,
+                )
+                return result.get("response", "").strip()
+
+            if self.backend_type == "llama_cpp":
+                result = await self.backend.generate(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=0.7,
+                    top_p=0.9,
+                )
+                return result.get("response", "").strip()
+        except Exception as e:
+            print(f"Final reply generation error: {e}")
+
+        return internal_notes.strip()
 
     def _build_layer_prompt(
         self,
@@ -427,11 +536,24 @@ class HRMEngine(IAIEngine):
             "Process and analyze this input"
         )
 
-        return f"""Layer {layer} ({layer_name}): {instruction}
+        return f"""Internal reasoning step {layer} ({layer_name}): {instruction}
 
-User input: {input_text}
+Input: {input_text}
 
-Provide your analysis:"""
+Brief internal notes only (not shown to the user):"""
+
+    def _build_final_reply_prompt(
+        self, user_input: str, internal_notes: str
+    ) -> str:
+        """Ask model for a direct user-facing answer after internal reasoning."""
+        return f"""The user asked:
+{user_input}
+
+Internal notes (for you only — do not repeat verbatim):
+{internal_notes}
+
+Write your direct reply to the user. Use natural conversational language only.
+Do not include headings, bullet labels, or phrases like "based on analysis"."""
 
     async def _process_reasoning_layer(
             self,
@@ -465,30 +587,24 @@ Provide your analysis:"""
 
         final_layer_result = reasoning_chain[-1]["result"] if reasoning_chain else ""
 
-        # Simulate response generation
-        base_response = f"Based on hierarchical reasoning: {final_layer_result}"
+        # Real backends already apply personality in the system prompt
+        if self.backend_type in ("ollama", "llama_cpp"):
+            return str(final_layer_result).strip()
 
-        # Add personality if available
-        if request.context and request.use_personality:
-            personality = request.context.personality_mode
-            personality_prompt = self.personality_prompts.get(
-                personality, "Respond naturally"
-            )
-            base_response = f"{personality_prompt}. {base_response}"
-
-        return base_response
+        return f"Based on hierarchical reasoning: {final_layer_result}"
 
     async def _apply_personality_and_values(self, response_text: str,
                                             context: UserContext) -> str:
         """Apply personality and values to the response"""
         final_response = response_text
 
-        # Apply personality adaptation
-        if context and context.personality_mode:
-            personality_modifier = self.personality_adapters.get(
-                context.personality_mode, lambda x: x
-            )
-            final_response = personality_modifier(final_response)
+        # Personality is encoded in Ollama/Llama.cpp prompts — avoid double-prefixing
+        if self.backend_type not in ("ollama", "llama_cpp"):
+            if context and context.personality_mode:
+                personality_modifier = self.personality_adapters.get(
+                    context.personality_mode, lambda x: x
+                )
+                final_response = personality_modifier(final_response)
 
         # Apply values integration if profile exists
         if context and context.values_profile:

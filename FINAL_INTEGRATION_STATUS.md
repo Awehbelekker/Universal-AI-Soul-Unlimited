@@ -1,5 +1,9 @@
 # Universal Soul AI - Final Integration Status
-## 100% Integration Complete ✅
+
+> **Note:** This document describes the *desktop orchestrator* integration target.
+> For current shipped status see [PROJECT_STATUS.md](PROJECT_STATUS.md) and [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md).
+
+## 100% Integration Complete ✅ (desktop orchestrator scope)
 
 **Date:** January 2025  
 **Status:** All optimizations integrated and fully functional

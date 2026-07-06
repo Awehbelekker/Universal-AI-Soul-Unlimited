@@ -229,8 +229,7 @@ class CoquiTTSOptimizer:
                 audio_bytes = audio_np.tobytes()
 
             logger.info(
-                f"Synthesized {
-                    len(audio_bytes)} bytes with {personality} voice")
+                f"Synthesized {len(audio_bytes)} bytes with {personality} voice")
 
             return audio_bytes
 

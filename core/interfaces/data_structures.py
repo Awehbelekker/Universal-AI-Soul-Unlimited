@@ -211,6 +211,7 @@ class HRMRequest:
     user_input: str = ""
     context: UserContext = None
     reasoning_depth: int = 3  # 1-5 levels
+    max_tokens: int = 256
     use_values: bool = True
     use_personality: bool = True
     priority: int = 5

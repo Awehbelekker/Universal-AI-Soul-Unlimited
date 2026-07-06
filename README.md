@@ -1,170 +1,122 @@
 # Universal AI Soul Unlimited
-## The Complete Local AI System
 
-**Version:** 1.0.0  
-**Date:** October 2025  
-**Status:** Production Ready
+**Version:** 1.0.0-beta  
+**Status:** Beta — desktop AI orchestrator + Android UI shell (see [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md))
 
 ---
 
-## 🎯 What is Universal AI Soul Unlimited?
+## What is Universal AI Soul Unlimited?
 
-Universal AI Soul Unlimited is the **world's most comprehensive local AI system**, combining:
+A **local-first AI assistant platform** with:
 
-- ✅ **Multi-Agent Intelligence** (5 specialized agents with collective reasoning)
-- ✅ **Premium Voice Capabilities** (ElevenLabs, Deepgram, Coqui, Whisper)
-- ✅ **Advanced Automation** (CoAct-1 with 60-85% success rate)
-- ✅ **Multiple AI Models** (HRM-27M, Qwen2.5-3B, CPT-OSS-20B support)
-- ✅ **Vision AI** (Claude Vision, GPT-4 Vision, PaddleOCR)
-- ✅ **100% Privacy-First** (Local processing, AES-256 encryption, zero telemetry)
-- ✅ **Android Overlay System** (360° gesture navigation, context-aware automation)
+- **HRM reasoning engine** — Ollama/Qwen2.5-3B with placeholder fallback
+- **CoAct-1 automation** — task routing with optional TerminalBench
+- **ThinkMesh Core** — 12-module multi-agent scaffold (orchestration, voice, localai, etc.)
+- **Voice pipeline** — Whisper/Coqui (local) with cloud provider hooks
+- **Android app** — Kivy chat UI; connects to AI backend when available
+
+### Shipped today vs planned
+
+| Component | Status |
+|-----------|--------|
+| Desktop orchestrator (`main_desktop.py`) | Functional with Ollama or placeholder |
+| Android APK (`main.py` / `app_main.py`) | UI + AI bridge (requires runtime backend) |
+| Model weights | Not in repo — download via Ollama or `models/model_manager.py` |
+| Android overlay, PaddleOCR bundle | Not implemented |
+| Personality / values / onboarding services | Stubs |
+
+For honest scope details see [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md) and [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ---
 
-## 🚀 Quick Start
-
-### Installation
+## Quick Start (Desktop)
 
 ```bash
-# Clone the repository
 git clone https://github.com/Awehbelekker/universal-soul-ai
-cd "Universal AI Soul Unlimited"
+cd Universal-AI-Soul-Unlimited
 
-# Install dependencies (optional for desktop testing)
 pip install -r requirements.txt
 
-# Build APK
+# Install Ollama + model (recommended)
+python scripts/setup_ollama.py
+
+# Run full AI system
+python main_desktop.py
+```
+
+### Without Ollama
+
+The HRM engine falls back to a placeholder model. Responses are template-based but the pipeline still runs.
+
+---
+
+## Quick Start (Android)
+
+Build requires **Linux or WSL** (Buildozer does not run natively on Windows):
+
+```bash
 buildozer -v android debug
 ```
 
-### First Run
+Or use GitHub Actions: [.github/workflows/build-apk.yml](.github/workflows/build-apk.yml)
 
-1. Install the APK on your Android device
-2. Grant necessary permissions (microphone, storage, accessibility)
-3. Configure your preferences in Settings
-4. Start using voice commands or text chat!
+The APK uses a lightweight dependency set. Full on-device inference requires additional setup — see [ANDROID_BUILD_GUIDE.md](ANDROID_BUILD_GUIDE.md).
 
 ---
 
-## 📚 System Architecture
+## Configuration
 
-### Core Components
-
-1. **HRM Engine** (27M parameters)
-   - Hierarchical reasoning model
-   - 6 personality modes
-   - Mobile-optimized with battery awareness
-
-2. **Multi-Agent Orchestration**
-   - 5 specialized agents (Analytical, Creative, Technical, Research, General)
-   - 6 orchestration strategies
-   - Collective intelligence synthesis
-
-3. **Voice Interface**
-   - Premium STT: Deepgram (cloud), Whisper (local)
-   - Premium TTS: ElevenLabs (cloud), Coqui (local)
-   - Voice activity detection: Silero VAD
-
-4. **Automation Engine**
-   - CoAct-1 hybrid automation
-   - TerminalBench multi-agent coding
-   - 1000-sample local learning
-
-5. **Privacy & Security**
-   - 100% local processing
-   - AES-256 encryption
-   - Zero telemetry
-   - User-controlled keys
-
----
-
-## 🛠️ Configuration
-
-### Core Settings (config/config.json)
+Settings live in [config/universal_soul.json](config/universal_soul.json). Key sections:
 
 ```json
 {
   "hrm": {
     "backend": "ollama",
-    "model": "qwen2.5:3b",
-    "personality_mode": "friendly"
+    "ollama_model": "qwen2.5:3b"
   },
-  "voice": {
-    "stt_provider": "deepgram",
-    "tts_provider": "elevenlabs",
-    "enabled": true
-  },
-  "privacy": {
-    "local_only": true,
-    "encryption_enabled": true,
-    "telemetry_disabled": true
-  }
+  "coqui_tts": { "enabled": false },
+  "memgpt": { "enabled": true },
+  "terminalbench": { "enabled": true }
 }
 ```
 
 ---
 
-## 📱 Building for Android
+## Entry Points
 
-### Requirements
+| File | Purpose |
+|------|---------|
+| `main.py` | Re-exports `UniversalSoulAI`; launches Android UI on device, desktop CLI otherwise |
+| `main_desktop.py` | Full async orchestrator |
+| `app_main.py` | Kivy Android application |
 
-- Python 3.11+
-- Buildozer
-- Android SDK & NDK
-- 16GB+ RAM recommended
+---
 
-### Build Commands
+## Architecture
 
-```bash
-# Debug build
-buildozer -v android debug
-
-# Release build (requires signing)
-buildozer -v android release
-
-# Clean build
-buildozer android clean
-buildozer -v android debug
+```
+User → main_desktop / app_main
+         → HRM (Ollama | Llama.cpp | placeholder)
+         → CoAct-1 (+ TerminalBench for coding tasks)
+         → ThinkMesh adapter (thinkmesh_core orchestrator)
+         → MemGPT memory / Coqui TTS (optional)
 ```
 
 ---
 
-## 🔒 Privacy Statement
+## Privacy
 
-Universal AI Soul Unlimited is designed with **privacy-first** principles:
-
-- **100% Local Processing**: All AI computations happen on your device
-- **No Cloud Dependencies**: Works completely offline
-- **Zero Telemetry**: No usage tracking or analytics
-- **User-Controlled Encryption**: You own your encryption keys
-- **Open Source**: Fully auditable codebase
-- **GDPR/CCPA Compliant**: Automated privacy rights management
+Designed for local processing. Cloud voice providers (ElevenLabs, Deepgram) are optional and disabled when `voice` privacy settings require local-only mode.
 
 ---
 
-## 📄 License
+## License
 
 [Add your license here]
 
 ---
 
-## 🙏 Credits
+## Support
 
-Built with ❤️ by the Universal Soul AI Team
-
-Special thanks to:
-- Kivy framework
-- Python for Android (p4a)
-- All open-source contributors
-
----
-
-## 📞 Support
-
-- GitHub Issues: https://github.com/Awehbelekker/universal-soul-ai/issues
-- Documentation: [Link to docs]
-- Community: [Link to community]
-
----
-
-**Universal AI Soul Unlimited** - Unlimited Intelligence, Unlimited Privacy, Unlimited Possibilities
+- GitHub Issues: https://github.com/Awehbelekker/Universal-AI-Soul-Unlimited/issues
+- Setup guide: [SETUP_RUNTIME.md](SETUP_RUNTIME.md)

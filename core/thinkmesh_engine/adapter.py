@@ -1,14 +1,13 @@
 """
-ThinkMesh Adapter (with graceful HRM fallback)
-=============================================
+ThinkMesh Adapter (local thinkmesh_core + HRM fallback)
+========================================================
 
-This module provides a minimal integration surface for ThinkMesh.
-If the `thinkmesh` package is available, it will be used to run parallel
-reasoning. If not, it falls back to the local HRM engine to ensure
-the rest of the system can proceed without runtime errors.
+Uses the in-repo ``thinkmesh_core`` orchestrator when available, with
+optional external ``thinkmesh`` package support. Falls back to HRM.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -24,28 +23,36 @@ class ThinkResult:
 
 
 class ThinkMeshAdapter:
-    """Facade for ThinkMesh with HRM fallback.
-
-    Public contract:
-    - initialize(): probe availability and warm up fallback
-        - think(task: str, *, strategy: str|None, parallel: int|None,
-            max_steps: int|None) -> ThinkResult
-    - recommend_strategy(text: str) -> Dict[str, Any]
-    """
+    """Facade for ThinkMesh with HRM fallback."""
 
     def __init__(self) -> None:
         self._available = False
+        self._uses_local_core = False
         self._hrm = HRMEngine()
         self._config = get_config()
+        self._orchestrator = None
 
-        # ThinkMesh symbols (late-bound)
+        # Optional external thinkmesh package
         self._ThinkConfig = None
         self._ModelSpec = None
         self._StrategySpec = None
         self._think = None
 
     async def initialize(self) -> None:
-        # Try import thinkmesh; if not present, remain in HRM fallback mode
+        # Prefer local thinkmesh_core orchestrator
+        try:
+            from thinkmesh_core.orchestration.orchestrator import (
+                ThinkMeshOrchestrator,
+            )
+            self._orchestrator = ThinkMeshOrchestrator()
+            await self._orchestrator.initialize()
+            self._uses_local_core = True
+            self._available = True
+        except Exception:
+            self._orchestrator = None
+            self._uses_local_core = False
+
+        # Optional external package (overrides if present)
         try:
             import importlib
             tm = importlib.import_module("thinkmesh")
@@ -55,14 +62,17 @@ class ThinkMeshAdapter:
             self._StrategySpec = getattr(tm, "StrategySpec")
             self._available = True
         except Exception:
-            self._available = False
+            pass
 
-        # Initialize fallback HRM regardless so we can use it immediately
         await self._hrm.initialize()
 
     @property
     def available(self) -> bool:
         return self._available
+
+    @property
+    def uses_local_core(self) -> bool:
+        return self._uses_local_core
 
     async def think(
         self,
@@ -76,18 +86,13 @@ class ThinkMeshAdapter:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
     ) -> ThinkResult:
-        """Run a thinking pass.
-
-        If ThinkMesh is available, use its orchestrator; otherwise use HRM.
-        """
+        """Run a thinking pass via external thinkmesh, local core, or HRM."""
         if (
-            self._available
-            and self._think
+            self._think
             and self._ThinkConfig
             and self._ModelSpec
             and self._StrategySpec
         ):
-            # Build a ThinkMesh config with sensible defaults for local usage
             backend = backend or "transformers"
             model_name = model_name or "Qwen2.5-7B-Instruct"
             max_tokens = max_tokens or 256
@@ -120,14 +125,34 @@ class ThinkMeshAdapter:
                     meta=ans.meta,
                 )
             except Exception:
-                # If ThinkMesh runtime fails, fall back to HRM for resilience
                 pass
 
-        # Fallback: use HRM hierarchical reasoning
-        from core.interfaces.data_structures import (
-            UserContext,
-            PersonalityMode,
-        )
+        if self._orchestrator:
+            try:
+                from thinkmesh_core.orchestration.orchestrator import (
+                    TaskPriority,
+                )
+                task_id = await self._orchestrator.submit_task(
+                    task_type="reasoning",
+                    requirements={"prompt": task, "strategy": strategy or "adaptive"},
+                    context={"source": "thinkmesh_adapter"},
+                    priority=TaskPriority.NORMAL,
+                )
+                # Route synchronously for adapter callers
+                active = self._orchestrator.active_tasks.get(task_id)
+                if active:
+                    await self._orchestrator._route_task(active)
+                    result = active.result
+                    if result:
+                        return ThinkResult(
+                            content=str(result),
+                            confidence=0.65,
+                            meta={"engine": "thinkmesh_core", "task_id": task_id},
+                        )
+            except Exception:
+                pass
+
+        from core.interfaces.data_structures import UserContext, PersonalityMode
 
         ctx = UserContext(
             user_id="system",
@@ -136,7 +161,6 @@ class ThinkMeshAdapter:
             values_profile=None,
         )
         text = await self._hrm.process_request(task, context=ctx)
-        # HRM does not output numeric confidence; return a neutral value
         return ThinkResult(
             content=text,
             confidence=0.5,
@@ -144,36 +168,15 @@ class ThinkMeshAdapter:
         )
 
     async def recommend_strategy(self, text: str) -> Dict[str, Any]:
-        """Provide a lightweight strategy recommendation from text.
-
-    Uses a simple heuristic today; when ThinkMesh is available we could
-    route through a cheap pass (e.g., self_consistency) to estimate
-    difficulty.
-        """
+        """Lightweight strategy recommendation from task text."""
         lw = text.lower()
         if any(
             k in lw
-            for k in [
-                "prove",
-                "synthesize",
-                "plan",
-                "orchestrate",
-                "multiple",
-                "complex",
-            ]
+            for k in ["prove", "synthesize", "plan", "orchestrate", "complex"]
         ):
             return {"name": "HYBRID", "confidence": 0.7}
         if any(k in lw for k in ["compare", "debate", "tradeoff", "versus"]):
             return {"name": "PARALLEL", "confidence": 0.65}
-        if any(
-            k in lw
-            for k in [
-                "step",
-                "sequence",
-                "simple",
-                "list",
-                "summarize",
-            ]
-        ):
+        if any(k in lw for k in ["step", "sequence", "simple", "list", "summarize"]):
             return {"name": "SEQUENTIAL", "confidence": 0.6}
         return {"name": "ADAPTIVE", "confidence": 0.55}

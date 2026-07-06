@@ -9,6 +9,7 @@ This is breakthrough technology for Universal Soul AI automation capabilities.
 """
 
 import asyncio
+import logging
 import time
 import uuid
 from typing import Dict, Any, List, Optional, Callable
@@ -19,6 +20,8 @@ from core.interfaces.base_interfaces import IAutomationEngine
 from core.interfaces.data_structures import AutomationTask, UserContext
 from core.interfaces.exceptions import CoActEngineError, handle_async_exception
 from core.config import get_config
+
+logger = logging.getLogger(__name__)
 
 # Import TerminalBench integration
 try:
@@ -143,12 +146,13 @@ class CoAct1AutomationEngine(IAutomationEngine):
                             coact_engine=self
                         )
                         self.terminalbench_enabled = True
-                        print("✅ TerminalBench multi-agent enabled")
-                        print(
-                            f"   Enhanced target: {
-                                self.enhanced_success_rate:.1%}")
+                        logger.info("TerminalBench multi-agent enabled")
+                        logger.info(
+                            "Enhanced target: %.1f%%",
+                            self.enhanced_success_rate * 100,
+                        )
                 except Exception as e:
-                    print(f"⚠️  TerminalBench init failed: {e}")
+                    logger.warning("TerminalBench init failed: %s", e)
                     self.terminalbench_enabled = False
 
             # Try to initialize ThinkMesh strategy advisor (optional)

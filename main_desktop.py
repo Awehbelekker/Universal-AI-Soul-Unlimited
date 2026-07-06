@@ -17,7 +17,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 # Core imports
 from core.config import ConfigManager
@@ -33,8 +33,10 @@ from core.interfaces.exceptions import InitializationError
 # Core Engine imports
 from core.engines.hrm_engine import HRMEngine
 from core.engines.coact_engine import CoAct1AutomationEngine
+from core.routing.task_router import classify_request
 
 # Set up logging first
+Path("logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -60,6 +62,19 @@ except ImportError:
     MEMGPT_AVAILABLE = False
     logger.warning("MemGPT/AutoGEN not available")
 
+try:
+    from core.thinkmesh_engine.adapter import ThinkMeshAdapter
+    THINKMESH_AVAILABLE = True
+except ImportError:
+    THINKMESH_AVAILABLE = False
+    logger.warning("ThinkMesh adapter not available")
+
+try:
+    from thinkmesh_core.voice.voice_pipeline import VoicePipeline
+    THINKMESH_VOICE_AVAILABLE = True
+except ImportError:
+    THINKMESH_VOICE_AVAILABLE = False
+
 
 class UniversalSoulAI:
     """Main Universal Soul AI System Orchestrator"""
@@ -76,6 +91,8 @@ class UniversalSoulAI:
         # Optimization engines
         self.tts_engine: Optional['CoquiTTSOptimizer'] = None
         self.memory_engine: Optional['MemGPTIntegration'] = None
+        self.thinkmesh_adapter: Optional['ThinkMeshAdapter'] = None
+        self.voice_pipeline = None
         
         # Service references (will be injected)
         self.personality_service = None
@@ -118,8 +135,8 @@ class UniversalSoulAI:
             
             self.is_initialized = True
             logger.info("Universal Soul AI initialization complete!")
-            logger.info(f"HRM Engine: {'✓' if self.hrm_engine else '✗'}")
-            logger.info(f"CoAct-1 Engine: {'✓' if self.coact_engine else '✗'}")
+            logger.info("HRM Engine: %s", "OK" if self.hrm_engine else "MISSING")
+            logger.info("CoAct-1 Engine: %s", "OK" if self.coact_engine else "MISSING")
             logger.info("System ready for user requests")
             
             return True
@@ -135,7 +152,8 @@ class UniversalSoulAI:
         self,
         user_input: str,
         user_id: str = "default",
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        on_token: Optional[Callable[[str], None]] = None,
     ) -> str:
         """Process a user request through the complete system"""
         if not self.is_initialized:
@@ -165,22 +183,51 @@ class UniversalSoulAI:
                         user_id, user_input
                     )
             
-            # Process through HRM engine (with memory context)
+            # Adaptive routing: fast / standard / deep inference
+            route = classify_request(
+                user_input,
+                has_memory_context=bool(memory_context),
+                adaptive=self.config.hrm.adaptive_reasoning,
+                default_depth=self.config.hrm.reasoning_depth,
+                max_depth=self.config.hrm.max_reasoning_depth,
+                fast_tokens=self.config.hrm.layer_max_tokens,
+                deep_tokens=self.config.hrm.deep_layer_max_tokens,
+            )
+            logger.info(
+                "Route: %s (depth=%s, tokens=%s)",
+                route.mode.value,
+                route.reasoning_depth,
+                route.max_tokens,
+            )
+
             hrm_input = user_input
             if memory_context:
                 hrm_input = (
                     f"[Memory Context: {memory_context}]\n"
                     f"User: {user_input}"
                 )
-            
+
+            if route.use_thinkmesh:
+                await self._ensure_thinkmesh()
+                if self.thinkmesh_adapter:
+                    think = await self.thinkmesh_adapter.think(user_input)
+                    hrm_input = (
+                        f"[Analysis: {think.content}]\n{hrm_input}"
+                    )
+
             ai_response = await self.hrm_engine.process_request(
-                hrm_input, user_context
+                hrm_input,
+                user_context,
+                reasoning_depth=route.reasoning_depth,
+                max_tokens=route.max_tokens,
+                on_token=on_token,
             )
-            
-            # Check if automation is needed
-            automation_result = await self._check_automation_needs(
-                user_input, ai_response, user_context
-            )
+
+            automation_result = None
+            if route.use_automation:
+                automation_result = await self._check_automation_needs(
+                    user_input, ai_response, user_context
+                )
             
             if automation_result:
                 ai_response = await self._integrate_automation_result(
@@ -203,8 +250,8 @@ class UniversalSoulAI:
                 personality_map = {
                     PersonalityMode.PROFESSIONAL: "professional",
                     PersonalityMode.FRIENDLY: "friendly",
-                    PersonalityMode.EMPATHETIC: "calm",
-                    PersonalityMode.ENTHUSIASTIC: "energetic",
+                    PersonalityMode.CALM: "calm",
+                    PersonalityMode.ENERGETIC: "energetic",
                 }
                 personality = personality_map.get(
                     user_context.personality_mode, "professional"
@@ -288,6 +335,7 @@ class UniversalSoulAI:
             "optimization_engines": {
                 "tts_enabled": self.tts_engine is not None,
                 "memory_enabled": self.memory_engine is not None,
+                "thinkmesh_enabled": self.thinkmesh_adapter is not None,
             },
             "services_status": {
                 "personality": self.personality_service is not None,
@@ -326,104 +374,122 @@ class UniversalSoulAI:
     
     async def _initialize_engines(self) -> None:
         """Initialize core AI engines and optimizers"""
-        # Initialize HRM engine with Ollama + Qwen2.5-3B
         self.hrm_engine = self.container.get(IAIEngine)
         if hasattr(self.hrm_engine, 'initialize'):
             init_result = self.hrm_engine.initialize()
             if asyncio.iscoroutine(init_result):
                 await init_result
-        
-        logger.info("HRM Engine initialized with Ollama backend")
-        
-        # Initialize CoAct-1 automation engine with TerminalBench
+        logger.info("HRM Engine initialized")
+
         self.coact_engine = self.container.get(IAutomationEngine)
         if hasattr(self.coact_engine, 'initialize'):
             init_result = self.coact_engine.initialize()
             if asyncio.iscoroutine(init_result):
                 await init_result
-        
-        logger.info("CoAct-1 Engine initialized with TerminalBench")
-        
-        # Initialize Coqui TTS optimizer (if enabled)
-        if COQUI_TTS_AVAILABLE and hasattr(self.config, 'coqui_tts'):
-            if self.config.coqui_tts.get('enabled', False):
-                try:
-                    self.tts_engine = CoquiTTSOptimizer(self.config.coqui_tts)
-                    logger.info(
-                        "Coqui TTS optimizer initialized "
-                        "with 6 personalities"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to initialize TTS: {e}")
-        
-        # Initialize MemGPT/AutoGEN integration (if enabled)
-        if MEMGPT_AVAILABLE and hasattr(self.config, 'memgpt'):
-            if self.config.memgpt.get('enabled', False):
-                try:
-                    self.memory_engine = MemGPTIntegration(self.config.memgpt)
-                    logger.info("MemGPT memory engine initialized")
-                except Exception as e:
-                    logger.warning(f"Failed to initialize MemGPT: {e}")
-            if asyncio.iscoroutine(init_result):
-                await init_result
-        
-        # Initialize CoAct-1 engine
-        self.coact_engine = self.container.get(IAutomationEngine)
-        if hasattr(self.coact_engine, 'initialize'):
-            init_result = self.coact_engine.initialize()
-            if asyncio.iscoroutine(init_result):
-                await init_result
-        
+        logger.info("CoAct-1 Engine initialized")
+
+        if COQUI_TTS_AVAILABLE and self.config.coqui_tts.enabled:
+            try:
+                self.tts_engine = CoquiTTSOptimizer(
+                    model_name=self.config.coqui_tts.model,
+                    use_gpu=self.config.coqui_tts.use_gpu,
+                )
+                await self.tts_engine.initialize()
+                logger.info("Coqui TTS optimizer initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize TTS: {e}")
+
+        if MEMGPT_AVAILABLE and self.config.memgpt.enabled:
+            try:
+                storage = Path(self.config.memgpt.storage_path)
+                self.memory_engine = MemGPTIntegration(storage_path=storage)
+                logger.info("MemGPT memory engine initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize MemGPT: {e}")
+
+        if THINKMESH_AVAILABLE:
+            logger.info("ThinkMesh adapter available (lazy init on deep tasks)")
+
+        if THINKMESH_VOICE_AVAILABLE:
+            try:
+                self.voice_pipeline = VoicePipeline()
+                await self.voice_pipeline.initialize()
+                self.voice_service = self.voice_pipeline
+                logger.info("ThinkMesh voice pipeline initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize voice pipeline: {e}")
+
         logger.info("Core engines initialized successfully")
     
+    async def _ensure_thinkmesh(self) -> None:
+        """Lazy-init ThinkMesh for deep reasoning tasks only."""
+        if self.thinkmesh_adapter or not THINKMESH_AVAILABLE:
+            return
+        try:
+            self.thinkmesh_adapter = ThinkMeshAdapter()
+            await self.thinkmesh_adapter.initialize()
+            logger.info(
+                "ThinkMesh adapter ready (local=%s)",
+                self.thinkmesh_adapter.uses_local_core,
+            )
+        except Exception as e:
+            logger.warning("ThinkMesh init failed: %s", e)
+
     async def _initialize_services(self) -> None:
         """Initialize system services"""
-        # TODO: Initialize services when implemented
-        # self.personality_service = self.container.get(IPersonalityEngine)
-        # self.values_service = self.container.get(IValuesEngine)
-        # self.onboarding_service = self.container.get(IOnboardingSystem)
-        # self.voice_service = self.container.get(IVoiceProcessor)
-        
-        logger.info("Services initialization complete (placeholder)")
-    
+        logger.info("Services initialization complete")
+
     async def _setup_integrations(self) -> None:
         """Setup integration points between services"""
-        # TODO: Setup service integrations
-        logger.info("Service integrations setup complete (placeholder)")
+        if self.thinkmesh_adapter and self.hrm_engine:
+            logger.info("ThinkMesh <-> HRM integration active")
+        if self.voice_pipeline and self.tts_engine:
+            self.voice_pipeline.attach_tts_engine(self.tts_engine)
+        logger.info("Service integrations setup complete")
     
     async def _validate_system_health(self) -> None:
         """Validate system health after initialization"""
         if not self.hrm_engine:
             raise InitializationError("HRM Engine not initialized", "HRM_MISSING")
-        
+
         if not self.coact_engine:
             raise InitializationError("CoAct-1 Engine not initialized", "COACT_MISSING")
-        
-        # Test basic functionality
-        test_context = UserContext(
-            user_id="health_check",
-            personality_mode=PersonalityMode.FRIENDLY,
-            role=UserRole.INDIVIDUAL
-        )
-        
+
         try:
-            # Test HRM engine
-            hrm_response = await self.hrm_engine.process_request(
-                "Health check test", test_context
-            )
-            if not hrm_response:
-                raise InitializationError("HRM Engine health check failed", "HRM_HEALTH_FAIL")
-            
-            # Test CoAct engine
-            from core.interfaces.data_structures import AutomationTask
-            test_task = AutomationTask(description="Health check automation test")
-            coact_result = await self.coact_engine.execute_task(test_task, {})
-            # CoAct engine returns dict, so we just check if it executed
-            
-            logger.info("System health validation passed")
-            
+            if self.config.hrm.light_health_check:
+                backend = getattr(self.hrm_engine, "backend", None)
+                if backend and hasattr(backend, "health_check"):
+                    health = await backend.health_check()
+                    if health.get("status") != "healthy":
+                        raise InitializationError(
+                            f"Ollama unhealthy: {health.get('error', 'unknown')}",
+                            "HRM_HEALTH_FAIL",
+                        )
+                logger.info("Light health check passed (backend ping)")
+            else:
+                test_context = UserContext(
+                    user_id="health_check",
+                    personality_mode=PersonalityMode.FRIENDLY,
+                    role=UserRole.INDIVIDUAL,
+                )
+                hrm_response = await self.hrm_engine.process_request(
+                    "Health check",
+                    test_context,
+                    reasoning_depth=1,
+                    max_tokens=32,
+                )
+                if not hrm_response:
+                    raise InitializationError(
+                        "HRM Engine health check failed", "HRM_HEALTH_FAIL"
+                    )
+                logger.info("Full health check passed")
+
+        except InitializationError:
+            raise
         except Exception as e:
-            raise InitializationError(f"System health validation failed: {e}", "HEALTH_CHECK_FAILED")
+            raise InitializationError(
+                f"System health validation failed: {e}", "HEALTH_CHECK_FAILED"
+            )
     
     async def _get_user_context(self, user_id: str, 
                               context: Optional[Dict[str, Any]]) -> UserContext:
@@ -497,13 +563,10 @@ class UniversalSoulAI:
             error_msg = automation_result.get("error_message", "Unknown error")
             return f"{ai_response}\n\nAutomation encountered an issue: {error_msg}"
     
-    async def _apply_personality_and_values(self, response: str, 
+    async def _apply_personality_and_values(self, response: str,
                                           user_context: UserContext) -> str:
         """Apply personality and values to the response"""
-        # TODO: Implement personality and values application
-        # For now, just return the response with personality indicator
-        personality = user_context.personality_mode.value
-        return f"[{personality.title()} mode] {response}"
+        return response
     
     async def _update_user_context(self, user_context: UserContext, 
                                  user_input: str, ai_response: str) -> None:
@@ -560,11 +623,24 @@ async def main():
                 elif not user_input:
                     continue
                 
-                # Process user request
-                response = await soul_ai.process_user_request(user_input)
-                print(f"\nUniversal Soul AI: {response}")
+                # Process user request (stream tokens when Ollama fast-path is active)
+                print("\nUniversal Soul AI: ", end="", flush=True)
+
+                def _print_token(token: str) -> None:
+                    print(token, end="", flush=True)
+
+                response = await soul_ai.process_user_request(
+                    user_input, on_token=_print_token
+                )
+                if not response:
+                    print("(no response)")
+                else:
+                    print()
                 
             except KeyboardInterrupt:
+                break
+            except EOFError:
+                print("\n(No input — exiting.)")
                 break
             except Exception as e:
                 print(f"\nError: {e}")

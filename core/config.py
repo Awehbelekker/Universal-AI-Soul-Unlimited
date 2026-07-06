@@ -19,7 +19,12 @@ class HRMConfig:
     max_tokens: int = 2048
     temperature: float = 0.7
     top_p: float = 0.9
-    reasoning_depth: int = 3
+    reasoning_depth: int = 1
+    max_reasoning_depth: int = 3
+    layer_max_tokens: int = 256
+    deep_layer_max_tokens: int = 512
+    adaptive_reasoning: bool = True
+    light_health_check: bool = True
     batch_size: int = 1
     device: str = "auto"  # auto, cpu, cuda
     use_cache: bool = True
@@ -131,6 +136,54 @@ class PerformanceConfig:
 
 
 @dataclass
+class CoquiTTSConfig:
+    """Configuration for Coqui TTS optimizer"""
+    enabled: bool = False
+    model: str = "tts_models/en/ljspeech/tacotron2-DDC"
+    output_dir: str = "data/tts_output"
+    use_gpu: bool = False
+
+
+@dataclass
+class MemGPTConfig:
+    """Configuration for MemGPT long-term memory"""
+    enabled: bool = True
+    storage_path: str = "data/memories"
+    max_context_interactions: int = 10
+    memory_tiers: list = field(default_factory=lambda: [
+        "core", "contextual", "archival"
+    ])
+
+
+@dataclass
+class TerminalBenchConfig:
+    """Configuration for TerminalBench multi-agent coding"""
+    enabled: bool = True
+    planner_temperature: float = 0.7
+    executor_max_retries: int = 3
+    validator_threshold: float = 0.8
+
+
+@dataclass
+class AutogenConfig:
+    """Configuration for AutoGEN multi-agent workflows"""
+    enabled: bool = False
+    max_rounds: int = 5
+    max_agents: int = 3
+
+
+class EngineConfig:
+    """Lightweight config bag for engine modules (backwards compat)."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.__dict__.update(kwargs)
+
+
+# Alias used by core/engines/* modules
+Config = EngineConfig
+
+
+@dataclass
 class UniversalSoulConfig:
     """Main configuration class"""
     # Core components
@@ -143,6 +196,12 @@ class UniversalSoulConfig:
     android: AndroidConfig = field(default_factory=AndroidConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
+    coqui_tts: CoquiTTSConfig = field(default_factory=CoquiTTSConfig)
+    memgpt: MemGPTConfig = field(default_factory=MemGPTConfig)
+    terminalbench: TerminalBenchConfig = field(
+        default_factory=TerminalBenchConfig
+    )
+    autogen: AutogenConfig = field(default_factory=AutogenConfig)
     
     # Global settings
     debug_mode: bool = False
@@ -165,6 +224,10 @@ class UniversalSoulConfig:
             "android": self.android.__dict__,
             "security": self.security.__dict__,
             "performance": self.performance.__dict__,
+            "coqui_tts": self.coqui_tts.__dict__,
+            "memgpt": self.memgpt.__dict__,
+            "terminalbench": self.terminalbench.__dict__,
+            "autogen": self.autogen.__dict__,
             "debug_mode": self.debug_mode,
             "log_level": self.log_level,
             "data_directory": self.data_directory,
@@ -198,6 +261,14 @@ class UniversalSoulConfig:
             config.security = SecurityConfig(**data['security'])
         if 'performance' in data:
             config.performance = PerformanceConfig(**data['performance'])
+        if 'coqui_tts' in data:
+            config.coqui_tts = CoquiTTSConfig(**data['coqui_tts'])
+        if 'memgpt' in data:
+            config.memgpt = MemGPTConfig(**data['memgpt'])
+        if 'terminalbench' in data:
+            config.terminalbench = TerminalBenchConfig(**data['terminalbench'])
+        if 'autogen' in data:
+            config.autogen = AutogenConfig(**data['autogen'])
         
         # Update global settings
         for key in ['debug_mode', 'log_level', 'data_directory', 

@@ -1,0 +1,131 @@
+{
+  "hrm": {
+    "model_path": "models/hrm_27m.bin",
+    "max_tokens": 2048,
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "reasoning_depth": 1,
+    "max_reasoning_depth": 3,
+    "layer_max_tokens": 256,
+    "deep_layer_max_tokens": 512,
+    "adaptive_reasoning": true,
+    "light_health_check": true,
+    "batch_size": 1,
+    "device": "auto",
+    "use_cache": true,
+    "cache_size": 1000,
+    "backend": "ollama",
+    "ollama_model": "llama3.2:3b",
+    "ollama_url": "http://localhost:11434",
+    "llama_cpp_threads": "auto",
+    "llama_cpp_batch_size": "auto",
+    "context_window": 32768
+  },
+  "coact": {
+    "success_threshold": 0.6,
+    "max_retries": 3,
+    "timeout_seconds": 30,
+    "parallel_tasks": 5,
+    "learning_enabled": true,
+    "feedback_weight": 0.8,
+    "complexity_scaling": true,
+    "terminalbench_enabled": true,
+    "use_multi_agent": true,
+    "target_success_rate": 0.75
+  },
+  "voice": {
+    "default_provider": "local",
+    "tts_model": "whisper-tiny",
+    "stt_model": "whisper-tiny",
+    "sample_rate": 16000,
+    "channels": 1,
+    "chunk_size": 1024,
+    "timeout": 10,
+    "language": "en-US",
+    "quality": "standard"
+  },
+  "personality": {
+    "default_mode": "friendly",
+    "intensity_range": [0.1, 1.0],
+    "adaptation_enabled": true,
+    "learning_rate": 0.1,
+    "memory_duration": 3600,
+    "context_window": 10
+  },
+  "values": {
+    "assessment_questions": 15,
+    "privacy_level": "high",
+    "family_coordination": true,
+    "values_weight": 0.7,
+    "update_frequency": 86400,
+    "backup_enabled": true
+  },
+  "onboarding": {
+    "skip_completed": true,
+    "timeout_minutes": 30,
+    "save_progress": true,
+    "allow_restart": true,
+    "required_steps": [
+      "welcome",
+      "privacy_setup",
+      "personality_selection",
+      "values_assessment",
+      "preferences_setup"
+    ]
+  },
+  "android": {
+    "overlay_enabled": false,
+    "gesture_sensitivity": 0.8,
+    "ui_theme": "dark",
+    "animation_speed": 1.0,
+    "vibration_enabled": true,
+    "touch_feedback": true,
+    "auto_hide_timeout": 5000
+  },
+  "security": {
+    "encryption_enabled": true,
+    "key_rotation_days": 90,
+    "session_timeout": 3600,
+    "max_login_attempts": 3,
+    "require_biometric": false,
+    "audit_logging": true
+  },
+  "performance": {
+    "max_memory_mb": 2048,
+    "max_cpu_percent": 80.0,
+    "cache_enabled": true,
+    "compression_enabled": true,
+    "batch_processing": true,
+    "background_tasks": 3
+  },
+  "coqui_tts": {
+    "enabled": false,
+    "model": "tts_models/en/ljspeech/tacotron2-DDC",
+    "output_dir": "data/tts_output",
+    "use_gpu": false
+  },
+  "memgpt": {
+    "enabled": true,
+    "storage_path": "data/memories",
+    "max_context_interactions": 10,
+    "memory_tiers": ["core", "contextual", "archival"]
+  },
+  "terminalbench": {
+    "enabled": true,
+    "planner_temperature": 0.7,
+    "executor_max_retries": 3,
+    "validator_threshold": 0.8
+  },
+  "autogen": {
+    "enabled": false,
+    "max_rounds": 5,
+    "max_agents": 3
+  },
+  "debug_mode": false,
+  "log_level": "INFO",
+  "data_directory": "data",
+  "models_directory": "models",
+  "cache_directory": "cache",
+  "logs_directory": "logs",
+  "config_version": "1.0.0"
+}

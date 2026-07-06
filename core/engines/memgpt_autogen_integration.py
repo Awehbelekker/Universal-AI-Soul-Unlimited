@@ -229,22 +229,29 @@ class MemGPTIntegration:
     async def store_interaction(
         self,
         user_id: str,
-        interaction: Dict[str, Any]
+        interaction: Any,
+        response: Optional[str] = None,
     ) -> bool:
         """
         Store user interaction in memory.
 
-        Args:
-            user_id: User identifier
-            interaction: Interaction data (prompt, response, metadata)
-
-        Returns:
-            bool: True if stored successfully
+        Accepts either a dict ``interaction`` or ``(user_input, response)`` pair.
         """
-        return await self.memory_store.store_interaction(
-            user_id,
-            interaction
-        )
+        if response is not None:
+            payload: Dict[str, Any] = {
+                "user_input": str(interaction),
+                "response": response,
+                "timestamp": datetime.now().isoformat(),
+            }
+        elif isinstance(interaction, dict):
+            payload = interaction
+        else:
+            payload = {
+                "user_input": str(interaction),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        return await self.memory_store.store_interaction(user_id, payload)
 
     async def recall_context(
         self,
@@ -252,22 +259,31 @@ class MemGPTIntegration:
         query: str,
         max_results: int = 5
     ) -> List[Dict[str, Any]]:
-        """
-        Recall relevant context from memory.
-
-        Args:
-            user_id: User identifier
-            query: Query to search for
-            max_results: Maximum results to return
-
-        Returns:
-            List of relevant memory entries
-        """
+        """Recall relevant context from memory."""
         return await self.memory_store.recall_memory(
             user_id,
             query,
             max_results
         )
+
+    async def recall_memory(
+        self,
+        user_id: str,
+        query: str,
+        max_results: int = 5,
+    ) -> Optional[str]:
+        """Recall memory as a single context string for HRM input."""
+        entries = await self.recall_context(user_id, query, max_results)
+        if not entries:
+            return None
+        snippets = []
+        for entry in entries:
+            data = entry.get("interaction", entry)
+            user_input = data.get("user_input") or data.get("prompt", "")
+            reply = data.get("response", "")
+            if user_input or reply:
+                snippets.append(f"{user_input} -> {reply}".strip(" ->"))
+        return "; ".join(snippets) if snippets else None
 
     async def update_user_preferences(
         self,
