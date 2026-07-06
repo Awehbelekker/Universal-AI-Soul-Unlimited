@@ -417,6 +417,12 @@ class OllamaIntegration:
             "Do not show reasoning steps, layer labels, analysis headings, "
             "or meta-commentary unless the user explicitly asks how you think."
         )
+        prompt += (
+            "\n\nWhen the user discusses values or boundaries, acknowledge "
+            "what they have shared, reflect it back clearly, and help them "
+            "define or refine rules together. Treat stated boundaries as "
+            "active guidance for future replies."
+        )
 
         if context:
             layer = context.get("layer")

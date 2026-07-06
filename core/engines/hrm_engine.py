@@ -164,7 +164,9 @@ class HRMEngine(IAIEngine):
                     hrm_request, on_token=on_token
                 )
             else:
-                hrm_response = await self._hierarchical_reasoning(hrm_request)
+                hrm_response = await self._hierarchical_reasoning(
+                    hrm_request, on_token=on_token
+                )
 
             # Apply personality and values
             final_response = await self._apply_personality_and_values(
@@ -364,7 +366,8 @@ class HRMEngine(IAIEngine):
 
     async def _hierarchical_reasoning(
         self,
-        request: HRMRequest
+        request: HRMRequest,
+        on_token: Optional[Callable[[str], None]] = None,
     ) -> HRMResponse:
         """Perform hierarchical reasoning through multiple layers"""
         response = HRMResponse(request_id=request.request_id)
@@ -389,6 +392,7 @@ class HRMEngine(IAIEngine):
                     notes,
                     request.context,
                     max_tokens=request.max_tokens,
+                    on_token=on_token,
                 )
             elif self.backend and self.backend_type in ("ollama", "llama_cpp"):
                 layer_result = await self._process_with_backend(
@@ -488,6 +492,7 @@ class HRMEngine(IAIEngine):
         internal_notes: str,
         context: UserContext,
         max_tokens: int = 256,
+        on_token: Optional[Callable[[str], None]] = None,
     ) -> str:
         """Turn internal reasoning into a direct user-facing reply."""
         prompt = self._build_final_reply_prompt(user_input, internal_notes)
@@ -495,11 +500,19 @@ class HRMEngine(IAIEngine):
 
         try:
             if self.backend_type == "ollama":
-                result = await self.backend.generate_hrm_response(
-                    prompt=prompt,
-                    personality=personality,
-                    max_tokens=max_tokens,
-                )
+                if on_token:
+                    result = await self.backend.generate_hrm_response_stream(
+                        prompt=prompt,
+                        personality=personality,
+                        max_tokens=max_tokens,
+                        on_token=on_token,
+                    )
+                else:
+                    result = await self.backend.generate_hrm_response(
+                        prompt=prompt,
+                        personality=personality,
+                        max_tokens=max_tokens,
+                    )
                 return result.get("response", "").strip()
 
             if self.backend_type == "llama_cpp":

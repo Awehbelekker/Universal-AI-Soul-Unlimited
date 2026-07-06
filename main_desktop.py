@@ -165,6 +165,7 @@ class UniversalSoulAI:
         try:
             # Get or create user context
             user_context = await self._get_user_context(user_id, context)
+            self._update_values_from_message(user_context, user_input)
             
             # Recall relevant memories (MemGPT)
             memory_context = None
@@ -201,6 +202,9 @@ class UniversalSoulAI:
             )
 
             hrm_input = user_input
+            values_context = self._format_values_context(user_context)
+            if values_context:
+                hrm_input = f"{values_context}\n{hrm_input}"
             if memory_context:
                 hrm_input = (
                     f"[Memory Context: {memory_context}]\n"
@@ -567,6 +571,81 @@ class UniversalSoulAI:
                                           user_context: UserContext) -> str:
         """Apply personality and values to the response"""
         return response
+
+    def _update_values_from_message(
+        self, user_context: UserContext, user_input: str
+    ) -> None:
+        """Capture values and boundaries the user states in conversation."""
+        lw = user_input.lower()
+        triggers = (
+            "value", "values", "boundary", "boundaries", "principle",
+            "lay down", "laydown", "ground rule", "what matters",
+            "structure bound", "our rules", "i believe", "i care about",
+            "don't discuss", "do not discuss", "off limits", "never ask",
+        )
+        if not any(t in lw for t in triggers):
+            return
+
+        if user_context.values_profile is None:
+            user_context.values_profile = {
+                "core_values": [],
+                "boundaries": [],
+                "notes": [],
+                "source": "conversation",
+            }
+
+        profile = user_context.values_profile
+        notes = profile.setdefault("notes", [])
+        notes.append(user_input.strip())
+        profile["notes"] = notes[-20:]
+
+        for line in user_input.replace(";", "\n").split("\n"):
+            stripped = line.strip()
+            low = stripped.lower()
+            if not stripped:
+                continue
+            if any(
+                low.startswith(p)
+                for p in ("i value ", "my values are ", "values: ")
+            ):
+                text = stripped.split(":", 1)[-1].strip()
+                for part in text.replace(" and ", ",").split(","):
+                    val = part.strip()
+                    if val and val not in profile["core_values"]:
+                        profile["core_values"].append(val)
+            if any(
+                low.startswith(p)
+                for p in (
+                    "boundary:", "boundaries:", "my boundary is ",
+                    "don't ", "do not ", "never ",
+                )
+            ):
+                if stripped not in profile["boundaries"]:
+                    profile["boundaries"].append(stripped)
+
+    def _format_values_context(self, user_context: UserContext) -> str:
+        """Build a prompt prefix from the user's values profile."""
+        profile = user_context.values_profile
+        if not profile:
+            return ""
+
+        lines = [
+            "[User values & boundaries — honor these in every reply:]",
+        ]
+        core = profile.get("core_values") or []
+        bounds = profile.get("boundaries") or []
+        if core:
+            lines.append("Core values: " + "; ".join(core))
+        if bounds:
+            lines.append("Boundaries: " + "; ".join(bounds))
+        recent = profile.get("notes") or []
+        if recent:
+            lines.append("Recent context: " + recent[-1])
+        lines.append(
+            "If the user asks about values or boundaries, confirm what you "
+            "remember and invite them to add or refine rules together."
+        )
+        return "\n".join(lines)
     
     async def _update_user_context(self, user_context: UserContext, 
                                  user_input: str, ai_response: str) -> None:
@@ -606,6 +685,11 @@ async def main():
         await soul_ai.initialize()
         
         # Interactive mode for testing
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("core.engines.ollama_integration").setLevel(
+            logging.WARNING
+        )
+
         print("\nUniversal Soul AI - Interactive Mode")
         print("Type 'quit' to exit, 'status' for system status")
         print("-" * 50)
@@ -623,19 +707,24 @@ async def main():
                 elif not user_input:
                     continue
                 
-                # Process user request (stream tokens when Ollama fast-path is active)
+                # Process user request (stream tokens when Ollama is active)
                 print("\nUniversal Soul AI: ", end="", flush=True)
+                streamed = False
 
                 def _print_token(token: str) -> None:
+                    nonlocal streamed
+                    streamed = True
                     print(token, end="", flush=True)
 
                 response = await soul_ai.process_user_request(
                     user_input, on_token=_print_token
                 )
-                if not response:
-                    print("(no response)")
-                else:
-                    print()
+                if not streamed:
+                    if response:
+                        print(response, end="")
+                    else:
+                        print("(no response)")
+                print()
                 
             except KeyboardInterrupt:
                 break

@@ -41,6 +41,12 @@ _STANDARD_KEYWORDS = (
 
 _MEMORY_KEYWORDS = ("remember", "don't forget", "note that", "keep in mind")
 
+_VALUES_KEYWORDS = (
+    "value", "values", "boundary", "boundaries", "principle", "principles",
+    "lay down", "laydown", "ground rule", "what matters", "structure bound",
+    "our rules", "my rule", "i believe", "i care about",
+)
+
 
 def classify_request(
     text: str,
@@ -71,6 +77,15 @@ def classify_request(
             mode=TaskMode.FAST,
             reasoning_depth=1,
             max_tokens=128,
+            use_automation=False,
+            use_thinkmesh=False,
+        )
+
+    if any(k in lw for k in _VALUES_KEYWORDS) and word_count < 60:
+        return RouteDecision(
+            mode=TaskMode.FAST,
+            reasoning_depth=1,
+            max_tokens=fast_tokens,
             use_automation=False,
             use_thinkmesh=False,
         )
