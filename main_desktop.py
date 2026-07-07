@@ -14,6 +14,7 @@ Enhanced with:
 """
 
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -75,6 +76,12 @@ try:
 except ImportError:
     THINKMESH_VOICE_AVAILABLE = False
 
+try:
+    from core.voice_pipeline.desktop_voice import DesktopVoiceService
+    DESKTOP_VOICE_AVAILABLE = True
+except ImportError:
+    DESKTOP_VOICE_AVAILABLE = False
+
 
 class UniversalSoulAI:
     """Main Universal Soul AI System Orchestrator"""
@@ -93,6 +100,7 @@ class UniversalSoulAI:
         self.memory_engine: Optional['MemGPTIntegration'] = None
         self.thinkmesh_adapter: Optional['ThinkMeshAdapter'] = None
         self.voice_pipeline = None
+        self.desktop_voice: Optional['DesktopVoiceService'] = None
         
         # Service references (will be injected)
         self.personality_service = None
@@ -249,18 +257,20 @@ class UniversalSoulAI:
                     user_id, user_input, final_response
                 )
             
-            # Synthesize voice response (TTS)
+            # Synthesize voice response (Coqui file) or speak via desktop TTS
+            personality_map = {
+                PersonalityMode.PROFESSIONAL: "professional",
+                PersonalityMode.FRIENDLY: "friendly",
+                PersonalityMode.CALM: "calm",
+                PersonalityMode.ENERGETIC: "energetic",
+                PersonalityMode.CREATIVE: "creative",
+                PersonalityMode.ANALYTICAL: "analytical",
+            }
+            personality = personality_map.get(
+                user_context.personality_mode, "friendly"
+            )
+
             if self.tts_engine and user_context.personality_mode:
-                personality_map = {
-                    PersonalityMode.PROFESSIONAL: "professional",
-                    PersonalityMode.FRIENDLY: "friendly",
-                    PersonalityMode.CALM: "calm",
-                    PersonalityMode.ENERGETIC: "energetic",
-                }
-                personality = personality_map.get(
-                    user_context.personality_mode, "professional"
-                )
-                
                 try:
                     audio_path = await self.tts_engine.synthesize(
                         final_response, personality
@@ -268,6 +278,12 @@ class UniversalSoulAI:
                     logger.info(f"Voice response saved: {audio_path}")
                 except Exception as e:
                     logger.warning(f"TTS synthesis failed: {e}")
+
+            if (
+                self.desktop_voice
+                and self.desktop_voice.speak_replies
+            ):
+                await self.desktop_voice.speak(final_response, personality)
             
             # Update metrics
             processing_time = asyncio.get_event_loop().time() - start_time
@@ -306,6 +322,10 @@ class UniversalSoulAI:
             
             # Save user contexts and system state
             await self._save_system_state()
+
+            # Persist user profiles (values/preferences/personality)
+            for ctx in list(self.active_sessions.values()):
+                self._save_user_profile(ctx)
             
             # Clear container
             self.container.clear()
@@ -340,6 +360,11 @@ class UniversalSoulAI:
                 "tts_enabled": self.tts_engine is not None,
                 "memory_enabled": self.memory_engine is not None,
                 "thinkmesh_enabled": self.thinkmesh_adapter is not None,
+                "desktop_voice": (
+                    self.desktop_voice.status()
+                    if self.desktop_voice
+                    else None
+                ),
             },
             "services_status": {
                 "personality": self.personality_service is not None,
@@ -363,6 +388,68 @@ class UniversalSoulAI:
         
         for directory in directories:
             Path(directory).mkdir(parents=True, exist_ok=True)
+
+        # User profile persistence (values, preferences, onboarding)
+        Path(self._user_profiles_dir()).mkdir(parents=True, exist_ok=True)
+
+    def _user_profiles_dir(self) -> str:
+        return str(Path(self.config.data_directory) / "user_profiles")
+
+    def _user_profile_path(self, user_id: str) -> Path:
+        safe = "".join(ch for ch in user_id if ch.isalnum() or ch in ("_", "-", "."))
+        if not safe:
+            safe = "default"
+        return Path(self._user_profiles_dir()) / f"{safe}.json"
+
+    def _serialize_user_context(self, ctx: UserContext) -> Dict[str, Any]:
+        return {
+            "user_id": ctx.user_id,
+            "personality_mode": getattr(ctx.personality_mode, "value", str(ctx.personality_mode)),
+            "role": getattr(ctx.role, "value", str(ctx.role)),
+            "preferences": ctx.preferences or {},
+            "values_profile": ctx.values_profile,
+        }
+
+    def _apply_user_profile(self, ctx: UserContext, data: Dict[str, Any]) -> None:
+        # preferences / values
+        if isinstance(data.get("preferences"), dict):
+            ctx.preferences.update(data["preferences"])
+        if isinstance(data.get("values_profile"), dict):
+            ctx.values_profile = data["values_profile"]
+
+        # personality mode
+        pm = data.get("personality_mode")
+        if isinstance(pm, str):
+            for mode in PersonalityMode:
+                if mode.value == pm:
+                    ctx.personality_mode = mode
+                    break
+
+        # role
+        role = data.get("role")
+        if isinstance(role, str):
+            for r in UserRole:
+                if r.value == role:
+                    ctx.role = r
+                    break
+
+    def _load_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        path = self._user_profile_path(user_id)
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("Failed to read user profile %s: %s", path, e)
+            return None
+
+    def _save_user_profile(self, ctx: UserContext) -> None:
+        path = self._user_profile_path(ctx.user_id)
+        try:
+            payload = self._serialize_user_context(ctx)
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            logger.warning("Failed to save user profile %s: %s", path, e)
     
     async def _register_services(self) -> None:
         """Register all services in the dependency injection container"""
@@ -422,6 +509,15 @@ class UniversalSoulAI:
                 logger.info("ThinkMesh voice pipeline initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize voice pipeline: {e}")
+
+        if DESKTOP_VOICE_AVAILABLE:
+            try:
+                self.desktop_voice = DesktopVoiceService()
+                logger.info(
+                    "Desktop voice module loaded (lazy init on first use)"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load desktop voice: {e}")
 
         logger.info("Core engines initialized successfully")
     
@@ -503,12 +599,16 @@ class UniversalSoulAI:
             user_context.update_activity()
             return user_context
         
-        # Create new user context
+        # Create new user context (then hydrate from persisted profile if present)
         user_context = UserContext(
             user_id=user_id,
             personality_mode=PersonalityMode.FRIENDLY,
             role=UserRole.INDIVIDUAL
         )
+
+        saved = self._load_user_profile(user_id)
+        if saved:
+            self._apply_user_profile(user_context, saved)
         
         if context:
             user_context.preferences.update(context)
@@ -520,8 +620,15 @@ class UniversalSoulAI:
     
     async def _check_onboarding_status(self, user_id: str) -> bool:
         """Check if user needs onboarding"""
-        # TODO: Implement onboarding status check
-        return False  # Placeholder
+        ctx = self.active_sessions.get(user_id)
+        if not ctx:
+            return True
+        # Onboarding considered complete once the user has any values_profile and a flag
+        if ctx.preferences.get("onboarding_complete") is True:
+            return False
+        if ctx.values_profile:
+            return False
+        return True
     
     async def _handle_onboarding(self, user_id: str, user_input: str) -> str:
         """Handle user onboarding process"""
@@ -659,6 +766,9 @@ class UniversalSoulAI:
         # Keep only last 50 conversations to manage memory
         if len(user_context.conversation_history) > 50:
             user_context.conversation_history = user_context.conversation_history[-50:]
+
+        # Persist lightweight profile continuously (values/preferences/personality)
+        self._save_user_profile(user_context)
     
     async def _save_system_state(self) -> None:
         """Save system state and user contexts"""
@@ -692,7 +802,17 @@ async def main():
 
         print("\nUniversal Soul AI - Interactive Mode")
         print("Type 'quit' to exit, 'status' for system status")
+        print("Commands: 'onboard', 'values', 'personality <mode>'")
+        print("Voice: 'voice' (toggle speak), 'listen' (mic input), 'voice status'")
         print("-" * 50)
+
+        user_id = "default"
+
+        # First-run onboarding (desktop CLI only)
+        ctx = await soul_ai._get_user_context(user_id, context=None)
+        if await soul_ai._check_onboarding_status(user_id):
+            print("\nFirst-time setup (quick). You can rerun anytime with 'onboard'.")
+            await _run_onboarding_wizard(soul_ai, ctx)
         
         while True:
             try:
@@ -704,6 +824,70 @@ async def main():
                     status = await soul_ai.get_system_status()
                     print(f"\nSystem Status: {status}")
                     continue
+                elif user_input.lower() == "values":
+                    ctx = await soul_ai._get_user_context(user_id, context=None)
+                    profile = ctx.values_profile or {}
+                    core = profile.get("core_values") or []
+                    bounds = profile.get("boundaries") or []
+                    print("\nSaved values & boundaries:")
+                    print(f"- Core values: {', '.join(core) if core else '(none)'}")
+                    print(f"- Boundaries: {', '.join(bounds) if bounds else '(none)'}")
+                    print(f"- Personality: {ctx.personality_mode.value}")
+                    continue
+                elif user_input.lower().startswith("personality "):
+                    mode_raw = user_input.split(" ", 1)[1].strip().lower()
+                    ctx = await soul_ai._get_user_context(user_id, context=None)
+                    matched = False
+                    for mode in PersonalityMode:
+                        if mode.value == mode_raw:
+                            ctx.personality_mode = mode
+                            ctx.preferences["onboarding_complete"] = True
+                            soul_ai._save_user_profile(ctx)
+                            matched = True
+                            print(f"\nPersonality set to: {mode.value}")
+                            break
+                    if not matched:
+                        print("\nUnknown personality. Try: professional, friendly, energetic, calm, creative, analytical")
+                    continue
+                elif user_input.lower() == "onboard":
+                    ctx = await soul_ai._get_user_context(user_id, context=None)
+                    await _run_onboarding_wizard(soul_ai, ctx)
+                    continue
+                elif user_input.lower() in ("voice", "voice on", "voice off"):
+                    if not soul_ai.desktop_voice:
+                        print("\nVoice not available. Install: pip install pyttsx3 SpeechRecognition pyaudio")
+                        continue
+                    if user_input.lower() == "voice off":
+                        soul_ai.desktop_voice.speak_replies = False
+                    elif user_input.lower() == "voice on":
+                        soul_ai.desktop_voice.speak_replies = True
+                    else:
+                        soul_ai.desktop_voice.speak_replies = (
+                            not soul_ai.desktop_voice.speak_replies
+                        )
+                    state = "ON" if soul_ai.desktop_voice.speak_replies else "OFF"
+                    print(f"\nVoice replies: {state}")
+                    continue
+                elif user_input.lower() == "voice status":
+                    if soul_ai.desktop_voice:
+                        print(f"\nVoice: {soul_ai.desktop_voice.status()}")
+                    else:
+                        print("\nVoice not initialized.")
+                    continue
+                elif user_input.lower() == "listen":
+                    if not soul_ai.desktop_voice or not soul_ai.desktop_voice.status()["mic_available"]:
+                        print("\nMicrophone not available. Install: pip install SpeechRecognition pyaudio")
+                        continue
+                    print("\nListening... (speak now)")
+                    heard = await soul_ai.desktop_voice.listen_once()
+                    if heard is None:
+                        print("Could not capture audio.")
+                        continue
+                    if not heard.strip():
+                        print("Didn't catch that — try again.")
+                        continue
+                    print(f"You (voice): {heard}")
+                    user_input = heard
                 elif not user_input:
                     continue
                 
@@ -717,7 +901,7 @@ async def main():
                     print(token, end="", flush=True)
 
                 response = await soul_ai.process_user_request(
-                    user_input, on_token=_print_token
+                    user_input, user_id=user_id, on_token=_print_token
                 )
                 if not streamed:
                     if response:
@@ -746,3 +930,47 @@ async def main():
 if __name__ == "__main__":
     # Run the main application
     asyncio.run(main())
+
+
+async def _run_onboarding_wizard(soul_ai: UniversalSoulAI, ctx: UserContext) -> None:
+    """
+    Minimal desktop CLI onboarding.
+    Captures: personality mode + core values + boundaries.
+    """
+    print("\n--- Onboarding ---")
+
+    # Personality
+    print("\nChoose a personality mode:")
+    print("professional / friendly / energetic / calm / creative / analytical")
+    pm = input("Personality (enter to keep current): ").strip().lower()
+    if pm:
+        for mode in PersonalityMode:
+            if mode.value == pm:
+                ctx.personality_mode = mode
+                break
+
+    # Values
+    vals = input("\nList a few core values (comma-separated): ").strip()
+    bounds = input("List any boundaries (comma-separated): ").strip()
+
+    if ctx.values_profile is None:
+        ctx.values_profile = {
+            "core_values": [],
+            "boundaries": [],
+            "notes": [],
+            "source": "onboarding",
+        }
+
+    profile = ctx.values_profile
+    for part in (vals or "").split(","):
+        v = part.strip()
+        if v and v not in profile["core_values"]:
+            profile["core_values"].append(v)
+    for part in (bounds or "").split(","):
+        b = part.strip()
+        if b and b not in profile["boundaries"]:
+            profile["boundaries"].append(b)
+
+    ctx.preferences["onboarding_complete"] = True
+    soul_ai._save_user_profile(ctx)
+    print("\nOnboarding saved.")
