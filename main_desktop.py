@@ -784,6 +784,50 @@ class UniversalSoulAI:
             self.system_metrics["average_response_time"] = new_avg
 
 
+async def _run_onboarding_wizard(soul_ai: UniversalSoulAI, ctx: UserContext) -> None:
+    """
+    Minimal desktop CLI onboarding.
+    Captures: personality mode + core values + boundaries.
+    """
+    print("\n--- Onboarding ---")
+
+    # Personality
+    print("\nChoose a personality mode:")
+    print("professional / friendly / energetic / calm / creative / analytical")
+    pm = input("Personality (enter to keep current): ").strip().lower()
+    if pm:
+        for mode in PersonalityMode:
+            if mode.value == pm:
+                ctx.personality_mode = mode
+                break
+
+    # Values
+    vals = input("\nList a few core values (comma-separated): ").strip()
+    bounds = input("List any boundaries (comma-separated): ").strip()
+
+    if ctx.values_profile is None:
+        ctx.values_profile = {
+            "core_values": [],
+            "boundaries": [],
+            "notes": [],
+            "source": "onboarding",
+        }
+
+    profile = ctx.values_profile
+    for part in (vals or "").split(","):
+        v = part.strip()
+        if v and v not in profile["core_values"]:
+            profile["core_values"].append(v)
+    for part in (bounds or "").split(","):
+        b = part.strip()
+        if b and b not in profile["boundaries"]:
+            profile["boundaries"].append(b)
+
+    ctx.preferences["onboarding_complete"] = True
+    soul_ai._save_user_profile(ctx)
+    print("\nOnboarding saved.")
+
+
 # Main execution
 async def main():
     """Main entry point for Universal Soul AI"""
@@ -930,47 +974,3 @@ async def main():
 if __name__ == "__main__":
     # Run the main application
     asyncio.run(main())
-
-
-async def _run_onboarding_wizard(soul_ai: UniversalSoulAI, ctx: UserContext) -> None:
-    """
-    Minimal desktop CLI onboarding.
-    Captures: personality mode + core values + boundaries.
-    """
-    print("\n--- Onboarding ---")
-
-    # Personality
-    print("\nChoose a personality mode:")
-    print("professional / friendly / energetic / calm / creative / analytical")
-    pm = input("Personality (enter to keep current): ").strip().lower()
-    if pm:
-        for mode in PersonalityMode:
-            if mode.value == pm:
-                ctx.personality_mode = mode
-                break
-
-    # Values
-    vals = input("\nList a few core values (comma-separated): ").strip()
-    bounds = input("List any boundaries (comma-separated): ").strip()
-
-    if ctx.values_profile is None:
-        ctx.values_profile = {
-            "core_values": [],
-            "boundaries": [],
-            "notes": [],
-            "source": "onboarding",
-        }
-
-    profile = ctx.values_profile
-    for part in (vals or "").split(","):
-        v = part.strip()
-        if v and v not in profile["core_values"]:
-            profile["core_values"].append(v)
-    for part in (bounds or "").split(","):
-        b = part.strip()
-        if b and b not in profile["boundaries"]:
-            profile["boundaries"].append(b)
-
-    ctx.preferences["onboarding_complete"] = True
-    soul_ai._save_user_profile(ctx)
-    print("\nOnboarding saved.")
