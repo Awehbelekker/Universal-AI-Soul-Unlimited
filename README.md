@@ -1,31 +1,35 @@
 # Universal AI Soul Unlimited
 
 **Version:** 1.0.0-beta  
-**Status:** Beta — desktop AI orchestrator + Android UI shell (see [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md))
+**Status:** Beta — desktop AI orchestrator + Android UI shell  
+**Vision (Ultimate Soul):** [VISION.md](VISION.md) · **Shipped today:** [PROJECT_STATUS.md](PROJECT_STATUS.md)
 
 ---
 
 ## What is Universal AI Soul Unlimited?
 
-A **local-first AI assistant platform** with:
+A **local-first personal AI companion** aimed at privacy-first reasoning, memory, voice, and automation on desktop and phone. Full end-state is defined in [VISION.md](VISION.md).
 
-- **HRM reasoning engine** — Ollama/Qwen2.5-3B with placeholder fallback
-- **CoAct-1 automation** — task routing with optional TerminalBench
-- **ThinkMesh Core** — 12-module multi-agent scaffold (orchestration, voice, localai, etc.)
-- **Voice pipeline** — Whisper/Coqui (local) with cloud provider hooks
-- **Android app** — Kivy chat UI; connects to AI backend when available
+Today’s stack includes:
+
+- **HRM reasoning** — Ollama (~3B) with placeholder fallback
+- **CoAct-1 automation** — routing / shell (real OS execution still limited)
+- **ThinkMesh Core** — 12-module multi-agent scaffold
+- **Voice** — Edge neural TTS default; Coqui XTTS cloning when set up
+- **Android app** — Kivy chat UI; network Ollama when available
 
 ### Shipped today vs planned
 
 | Component | Status |
 |-----------|--------|
 | Desktop orchestrator (`main_desktop.py`) | Functional with Ollama or placeholder |
+| Values / personality / onboarding | Basic CLI + persisted profiles |
+| Voice (Edge + optional XTTS clone) | Desktop working; clone needs a sample WAV |
 | Android APK (`main.py` / `app_main.py`) | UI + AI bridge (requires runtime backend) |
-| Model weights | Not in repo — download via Ollama or `models/model_manager.py` |
-| Android overlay, PaddleOCR bundle | Not implemented |
-| Personality / values / onboarding services | Stubs |
+| Model weights | Not in repo — download via Ollama |
+| ThinkMesh / real CoAct / overlay / OCR / AES | Partial or not implemented — see [VISION.md](VISION.md) |
 
-For honest scope details see [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md) and [PROJECT_STATUS.md](PROJECT_STATUS.md).
+For honest scope see [VISION.md](VISION.md), [PROJECT_STATUS.md](PROJECT_STATUS.md), and [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md).
 
 ---
 

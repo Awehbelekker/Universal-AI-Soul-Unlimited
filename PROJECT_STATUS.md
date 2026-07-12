@@ -1,6 +1,7 @@
 # Project Status (Source of Truth)
 
 **Last updated:** July 2026  
+**Product vision (end-state):** [VISION.md](VISION.md)  
 **Canonical shipped state:** [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md) + [main.py](main.py) / [app_main.py](app_main.py)
 
 ---
@@ -14,6 +15,7 @@
 | thinkmesh_core integration | 40% |
 | Android production app | 30% |
 | Tests / CI alignment | 50% |
+| **Ultimate Soul (vs VISION.md)** | **~45–55%** |
 
 ---
 
@@ -38,13 +40,16 @@
 - Real CoAct OS execution (still simulated)
 - AES-256 encryption (config flag only)
 
+Full Done / Partial / Missing map: [VISION.md](VISION.md#status-map-july-2026).
+
 ## Documentation disclaimer
 
-Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational**. Trust this file, `BETA_VERSION_INFO.md`, and runnable code over marketing docs.
+Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational**. Trust [VISION.md](VISION.md) for intent, this file for shipped reality, and runnable code over marketing docs.
 
 ## Next milestones
 
-1. Desktop smoke: `python smoke_test_ollama.py`
-2. Interactive chat + voice: `python main_desktop.py`
-3. Android: network Ollama fallback when full stack is unavailable
-4. Optional: offline Whisper STT, real automation, overlay module
+1. Prove voice clone end-to-end (`voice clone <wav>`)
+2. Offline Whisper STT
+3. One real CoAct automation path (consent + audit)
+4. Android thin client reliability (network Ollama)
+5. Optional: ThinkMesh depth, on-device models, overlay / OCR / sync
