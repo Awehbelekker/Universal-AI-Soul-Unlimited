@@ -2,7 +2,10 @@
 Setup Coqui XTTS-v2 for local voice cloning.
 
 Requires: NVIDIA GPU recommended (you have GTX 1080 Ti).
-Installs PyTorch (CUDA 11.8) + Coqui TTS, then verifies XTTS loads.
+Installs PyTorch (CUDA 11.8) + coqui-tts (maintained fork with Windows wheels).
+
+Do NOT use `pip install TTS` on Windows — that old package builds from source and
+needs Microsoft C++ Build Tools. Use `coqui-tts` instead (same `TTS` import path).
 
 Usage:
   python scripts/setup_voice_clone.py
@@ -51,9 +54,20 @@ def main() -> int:
         print("PyTorch install failed.")
         return code
 
-    code = run([py, "-m", "pip", "install", "TTS"])
+    # Remove deprecated Coqui package if present (conflicts with coqui-tts).
+    run([py, "-m", "pip", "uninstall", "-y", "TTS"])
+
+    code = run([py, "-m", "pip", "install", "coqui-tts", "transformers>=4.57,<5"])
     if code != 0:
-        print("Coqui TTS install failed.")
+        print(
+            "coqui-tts install failed.\n"
+            "If you see a C++ / Visual Studio build error, install Build Tools with "
+            "the 'Desktop development with C++' workload:\n"
+            "  https://visualstudio.microsoft.com/visual-cpp-build-tools/\n"
+            "Or: winget install Microsoft.VisualStudio.2022.BuildTools "
+            "--override \"--wait --passive --add Microsoft.VisualStudio.Workload.VCTools "
+            "--includeRecommended\""
+        )
         return code
 
     print("\nVerifying import + CUDA…")
@@ -62,7 +76,7 @@ def main() -> int:
         "from TTS.api import TTS; "
         "print('torch', torch.__version__, 'cuda', torch.cuda.is_available()); "
         "print('TTS import OK'); "
-        "print('Next: in chat use  voice clone path\\to\\sample.wav'); "
+        "print('Next: in chat use  voice clone path\\\\to\\\\sample.wav'); "
         "print('Sample tip: 6-15s clean speech WAV, one speaker, no music.')"
     )
     return run([py, "-c", verify])

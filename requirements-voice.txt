@@ -7,5 +7,6 @@ PyAudio>=0.2.14
 # Voice cloning (heavy — use setup script):
 #   python scripts/setup_voice_clone.py
 # Then: voice clone path/to/sample.wav
-# TTS>=0.22.0
+# Use coqui-tts (not the deprecated TTS package — that needs MSVC on Windows).
+# coqui-tts>=0.27.0
 # torch (CUDA 11.8 recommended for GTX 10-series)

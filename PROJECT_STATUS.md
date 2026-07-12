@@ -34,7 +34,7 @@
 - Bundled PaddleOCR (runtime optional import in `core/automation/ocr_engine.py`)
 - Full personality/values assessment services (CLI/onboarding covers basics)
 - Offline Whisper STT (mic uses Google recognition by default)
-- Coqui XTTS stack may still need install: `python scripts/setup_voice_clone.py`
+- First XTTS model download happens on first `voice clone` (needs a clean 6–15s WAV)
 - Real CoAct OS execution (still simulated)
 - AES-256 encryption (config flag only)
 
