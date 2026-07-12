@@ -847,7 +847,8 @@ async def main():
         print("\nUniversal Soul AI - Interactive Mode")
         print("Type 'quit' to exit, 'status' for system status")
         print("Commands: 'onboard', 'values', 'personality <mode>'")
-        print("Voice: 'voice' (toggle), 'listen', 'voice status', 'voice set <name>'")
+        print("Voice: 'voice', 'listen', 'voice status', 'voice set <name>'")
+        print("Clone: 'voice clone <wav>', 'voice clone clear'")
         print("-" * 50)
 
         user_id = "default"
@@ -857,6 +858,11 @@ async def main():
         if await soul_ai._check_onboarding_status(user_id):
             print("\nFirst-time setup (quick). You can rerun anytime with 'onboard'.")
             await _run_onboarding_wizard(soul_ai, ctx)
+
+        # Restore saved clone reference if any
+        if soul_ai.desktop_voice and ctx.preferences.get("clone_wav"):
+            msg = soul_ai.desktop_voice.set_clone_wav(ctx.preferences["clone_wav"])
+            logger.info("Restored voice clone: %s", msg)
         
         while True:
             try:
@@ -923,9 +929,34 @@ async def main():
                         print(f"Voice id: {st.get('voice_id')}")
                         print(f"Speak replies: {st.get('speak_replies')}")
                         print(f"Mic: {st.get('mic_available')}")
-                        print(f"Cloning: {st.get('cloning')} — {st.get('note')}")
+                        print(f"Coqui/XTTS: {st.get('coqui_available')}")
+                        print(f"Cloning: {st.get('cloning')} | ref: {st.get('clone_wav')}")
+                        print(f"Note: {st.get('note')}")
                     else:
                         print("\nVoice not initialized.")
+                    continue
+                elif user_input.lower() == "voice clone clear":
+                    if soul_ai.desktop_voice:
+                        soul_ai.desktop_voice.clear_clone()
+                        ctx = await soul_ai._get_user_context(user_id, context=None)
+                        ctx.preferences.pop("clone_wav", None)
+                        soul_ai._save_user_profile(ctx)
+                        print("\nClone voice cleared — back to Edge/neural TTS.")
+                    continue
+                elif user_input.lower().startswith("voice clone "):
+                    if not soul_ai.desktop_voice:
+                        print("\nVoice not available.")
+                        continue
+                    path = user_input[12:].strip().strip('"')
+                    await soul_ai.desktop_voice.initialize()
+                    msg = soul_ai.desktop_voice.set_clone_wav(path)
+                    print(f"\n{msg}")
+                    if soul_ai.desktop_voice.clone_wav:
+                        ctx = await soul_ai._get_user_context(user_id, context=None)
+                        ctx.preferences["clone_wav"] = soul_ai.desktop_voice.clone_wav
+                        soul_ai._save_user_profile(ctx)
+                        soul_ai.desktop_voice.speak_replies = True
+                        print("Voice replies ON. Say something to hear the clone (or Edge fallback).")
                     continue
                 elif user_input.lower().startswith("voice set "):
                     if not soul_ai.desktop_voice:

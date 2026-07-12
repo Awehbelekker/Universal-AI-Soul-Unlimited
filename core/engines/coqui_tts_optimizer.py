@@ -173,19 +173,14 @@ class CoquiTTSOptimizer:
         text: str,
         personality: str = "professional",
         output_path: Optional[Path] = None,
-        speaker_idx: Optional[int] = None
+        speaker_idx: Optional[int] = None,
+        speaker_wav: Optional[str] = None,
+        language: str = "en",
     ) -> Optional[bytes]:
         """
         Synthesize speech with personality-specific voice.
 
-        Args:
-            text: Text to synthesize
-            personality: Personality mode
-            output_path: Optional path to save audio file
-            speaker_idx: Optional speaker index for multi-speaker models
-
-        Returns:
-            Audio bytes if successful, None otherwise
+        For XTTS models, pass speaker_wav to clone a reference voice.
         """
         if not self.initialized:
             success = await self.initialize()
@@ -202,30 +197,33 @@ class CoquiTTSOptimizer:
                 f"Synthesizing with {personality} personality: '{text[:50]}...'"
             )
 
+            kwargs: Dict[str, Any] = {}
+            # XTTS / multi-speaker cloning
+            if speaker_wav:
+                kwargs["speaker_wav"] = str(speaker_wav)
+                kwargs["language"] = language
+            elif speaker_idx is not None:
+                kwargs["speaker"] = speaker_idx
+
             # Generate audio
             if output_path:
-                # Save to file
                 await asyncio.to_thread(
                     self.tts.tts_to_file,
                     text=text,
                     file_path=str(output_path),
-                    speaker=speaker_idx,
-                    speed=config["speaking_rate"]
+                    speed=config["speaking_rate"],
+                    **kwargs,
                 )
 
-                # Read file back as bytes
                 with open(output_path, "rb") as f:
                     audio_bytes = f.read()
             else:
-                # Generate to memory
                 audio_np = await asyncio.to_thread(
                     self.tts.tts,
                     text=text,
-                    speaker=speaker_idx,
-                    speed=config["speaking_rate"]
+                    speed=config["speaking_rate"],
+                    **kwargs,
                 )
-
-                # Convert numpy array to bytes (simplified)
                 audio_bytes = audio_np.tobytes()
 
             logger.info(
@@ -236,6 +234,26 @@ class CoquiTTSOptimizer:
         except Exception as e:
             logger.error(f"TTS synthesis failed: {e}")
             return None
+
+    async def clone_speak(
+        self,
+        text: str,
+        speaker_wav: str,
+        output_path: Optional[Path] = None,
+        language: str = "en",
+    ) -> Optional[bytes]:
+        """Speak using a cloned voice from a short reference WAV (XTTS)."""
+        return await self.synthesize(
+            text=text,
+            personality="friendly",
+            output_path=output_path,
+            speaker_wav=speaker_wav,
+            language=language,
+        )
+
+    @staticmethod
+    def xtts_model_name() -> str:
+        return "tts_models/multilingual/multi-dataset/xtts_v2"
 
     async def synthesize_with_emotion(
         self,

@@ -1,6 +1,11 @@
 # Optional desktop voice dependencies
-edge-tts>=6.1.0          # neural Microsoft voices (preferred)
+edge-tts>=6.1.0          # neural Microsoft voices (preferred default)
 pyttsx3>=2.90            # robotic system TTS fallback
 SpeechRecognition>=3.10.0
 PyAudio>=0.2.14
-# Voice cloning (optional, heavy): pip install TTS  → Coqui XTTS-v2
+
+# Voice cloning (heavy — use setup script):
+#   python scripts/setup_voice_clone.py
+# Then: voice clone path/to/sample.wav
+# TTS>=0.22.0
+# torch (CUDA 11.8 recommended for GTX 10-series)

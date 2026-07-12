@@ -21,8 +21,7 @@
 
 - `python main_desktop.py` — Ollama chat with streaming, adaptive routing, memory
 - Persisted values / personality in `data/user_profiles/` + CLI `onboard` / `values`
-- Desktop voice: **Edge neural TTS** (natural) with pyttsx3 fallback; `voice` / `listen` / `voice set`
-- Voice cloning (Coqui XTTS) **scaffolded only** — not installed/wired yet
+- Desktop voice: **Edge neural TTS** default; **XTTS cloning** via `voice clone <wav>` after `python scripts/setup_voice_clone.py`
 - `python smoke_test_ollama.py` / `python scripts/setup_ollama.py`
 - Benchmark suite under `benchmarks/`
 - GitHub Actions APK + benchmark workflows
@@ -35,7 +34,7 @@
 - Bundled PaddleOCR (runtime optional import in `core/automation/ocr_engine.py`)
 - Full personality/values assessment services (CLI/onboarding covers basics)
 - Offline Whisper STT (mic uses Google recognition by default)
-- Coqui XTTS-v2 **voice cloning** (needs `pip install TTS` + reference WAV)
+- Coqui XTTS stack may still need install: `python scripts/setup_voice_clone.py`
 - Real CoAct OS execution (still simulated)
 - AES-256 encryption (config flag only)
 
