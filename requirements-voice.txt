@@ -1,4 +1,6 @@
 # Optional desktop voice dependencies
-pyttsx3>=2.90
+edge-tts>=6.1.0          # neural Microsoft voices (preferred)
+pyttsx3>=2.90            # robotic system TTS fallback
 SpeechRecognition>=3.10.0
 PyAudio>=0.2.14
+# Voice cloning (optional, heavy): pip install TTS  → Coqui XTTS-v2

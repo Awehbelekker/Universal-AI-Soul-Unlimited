@@ -216,7 +216,7 @@ class UniversalSoulAI:
             if memory_context:
                 hrm_input = (
                     f"[Memory Context: {memory_context}]\n"
-                    f"User: {user_input}"
+                    f"{hrm_input}"
                 )
 
             if route.use_thinkmesh:
@@ -847,7 +847,7 @@ async def main():
         print("\nUniversal Soul AI - Interactive Mode")
         print("Type 'quit' to exit, 'status' for system status")
         print("Commands: 'onboard', 'values', 'personality <mode>'")
-        print("Voice: 'voice' (toggle speak), 'listen' (mic input), 'voice status'")
+        print("Voice: 'voice' (toggle), 'listen', 'voice status', 'voice set <name>'")
         print("-" * 50)
 
         user_id = "default"
@@ -904,19 +904,41 @@ async def main():
                     if user_input.lower() == "voice off":
                         soul_ai.desktop_voice.speak_replies = False
                     elif user_input.lower() == "voice on":
+                        await soul_ai.desktop_voice.initialize()
                         soul_ai.desktop_voice.speak_replies = True
                     else:
                         soul_ai.desktop_voice.speak_replies = (
                             not soul_ai.desktop_voice.speak_replies
                         )
+                        if soul_ai.desktop_voice.speak_replies:
+                            await soul_ai.desktop_voice.initialize()
                     state = "ON" if soul_ai.desktop_voice.speak_replies else "OFF"
-                    print(f"\nVoice replies: {state}")
+                    eng = soul_ai.desktop_voice.status().get("tts_engine")
+                    print(f"\nVoice replies: {state} (engine: {eng})")
                     continue
                 elif user_input.lower() == "voice status":
                     if soul_ai.desktop_voice:
-                        print(f"\nVoice: {soul_ai.desktop_voice.status()}")
+                        st = soul_ai.desktop_voice.status()
+                        print(f"\nVoice engine: {st.get('tts_engine')}")
+                        print(f"Voice id: {st.get('voice_id')}")
+                        print(f"Speak replies: {st.get('speak_replies')}")
+                        print(f"Mic: {st.get('mic_available')}")
+                        print(f"Cloning: {st.get('cloning')} — {st.get('note')}")
                     else:
                         print("\nVoice not initialized.")
+                    continue
+                elif user_input.lower().startswith("voice set "):
+                    if not soul_ai.desktop_voice:
+                        print("\nVoice not available.")
+                        continue
+                    name = user_input[10:].strip()
+                    if not name:
+                        print("\nUsage: voice set en-US-JennyNeural")
+                        continue
+                    await soul_ai.desktop_voice.initialize()
+                    soul_ai.desktop_voice.voice_id = name
+                    print(f"\nEdge voice set to: {name}")
+                    print("Examples: en-US-JennyNeural, en-US-GuyNeural, en-GB-SoniaNeural")
                     continue
                 elif user_input.lower() == "listen":
                     if not soul_ai.desktop_voice or not soul_ai.desktop_voice.status()["mic_available"]:
