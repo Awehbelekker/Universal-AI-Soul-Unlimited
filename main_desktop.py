@@ -930,6 +930,7 @@ async def main():
                         print(f"Voice id: {st.get('voice_id')}")
                         print(f"Speak replies: {st.get('speak_replies')}")
                         print(f"Mic: {st.get('mic_available')}")
+                        print(f"STT: {st.get('stt_engine')} (whisper={st.get('whisper_available')})")
                         print(f"Coqui/XTTS: {st.get('coqui_available')}")
                         print(f"Cloning: {st.get('cloning')} | ref: {st.get('clone_wav')}")
                         print(f"Note: {st.get('note')}")

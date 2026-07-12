@@ -3,6 +3,7 @@ edge-tts>=6.1.0          # neural Microsoft voices (preferred default)
 pyttsx3>=2.90            # robotic system TTS fallback
 SpeechRecognition>=3.10.0
 PyAudio>=0.2.14
+faster-whisper>=1.0.0    # offline STT (preferred); falls back to Google if missing
 
 # Voice cloning (heavy — use setup script):
 #   python scripts/setup_voice_clone.py

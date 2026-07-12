@@ -24,6 +24,7 @@
 - `python main_desktop.py` — Ollama chat with streaming, adaptive routing, memory
 - Persisted values / personality in `data/user_profiles/` + CLI `onboard` / `values`
 - Desktop voice: **Edge neural TTS** default; **XTTS cloning** via `voice clone <wav>` after `python scripts/setup_voice_clone.py`
+- Offline STT: **faster-whisper** preferred for `listen` / mic; Google recognition only as fallback
 - `python smoke_test_ollama.py` / `python scripts/setup_ollama.py`
 - Benchmark suite under `benchmarks/`
 - GitHub Actions APK + benchmark workflows
@@ -35,7 +36,6 @@
 - Android 360° overlay (config only, no code)
 - Bundled PaddleOCR (runtime optional import in `core/automation/ocr_engine.py`)
 - Full personality/values assessment services (CLI/onboarding covers basics)
-- Offline Whisper STT (mic uses Google recognition by default)
 - First XTTS model download (~2GB) on first clone — may take a while; CPML non-commercial terms apply
 - Real CoAct OS execution (still simulated)
 - AES-256 encryption (config flag only)
@@ -48,8 +48,6 @@ Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational
 
 ## Next milestones
 
-1. Prove voice clone end-to-end (`voice clone <wav>`)
-2. Offline Whisper STT
-3. One real CoAct automation path (consent + audit)
-4. Android thin client reliability (network Ollama)
-5. Optional: ThinkMesh depth, on-device models, overlay / OCR / sync
+1. One real CoAct automation path (consent + audit)
+2. Android thin client reliability (network Ollama)
+3. Optional: ThinkMesh depth, on-device models, overlay / OCR / sync

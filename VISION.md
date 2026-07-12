@@ -115,7 +115,7 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 | Edge neural TTS (desktop) | **Done** | Default good voice |
 | Coqui / XTTS install on Windows | **Done** | `coqui-tts` via `scripts/setup_voice_clone.py` |
 | Voice clone from WAV | **Partial** | CLI: `voice clone <file|record|demo>`; needs sample + first model download |
-| Offline Whisper STT | **Missing** | Mic defaults to Google recognition |
+| Offline Whisper STT | **Done** | `faster-whisper` preferred; Google fallback |
 | ElevenLabs / Deepgram | **Partial** | Hooks / privacy gates; not primary |
 
 ### Automation
@@ -147,8 +147,8 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 
 ## Recommended build order (to Ultimate)
 
-1. **Desktop companion polish** — prove `voice clone`, Edge/XTTS day-to-day, values/memory quality  
-2. **Offline STT** — Whisper local for mic  
+1. ~~**Desktop companion polish**~~ — Edge/XTTS + `voice clone` path proven  
+2. ~~**Offline STT**~~ — Whisper local for mic (`faster-whisper`; Google fallback)  
 3. **Real CoAct slice** — one real automation path with consent + audit  
 4. **Android thin client** — reliable LAN/cloud-to-desktop Ollama; settings screen  
 5. **ThinkMesh depth** — make orchestration earn its place vs single HRM path  

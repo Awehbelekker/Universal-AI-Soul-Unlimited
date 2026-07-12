@@ -6,7 +6,9 @@ TTS priority:
   2. edge-tts (Microsoft neural voices — natural)
   3. pyttsx3 (Windows SAPI — robotic fallback)
 
-STT: SpeechRecognition + microphone (Google cloud by default).
+STT priority:
+  1. faster-whisper / openai-whisper (local offline)
+  2. SpeechRecognition Google cloud (fallback)
 
 Setup cloning:
   python scripts/setup_voice_clone.py
@@ -85,16 +87,40 @@ def _probe_microphone() -> bool:
         return False
 
 
+def _probe_faster_whisper() -> bool:
+    try:
+        import faster_whisper  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _probe_openai_whisper() -> bool:
+    try:
+        import whisper  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 class DesktopVoiceService:
     """Speak replies (clone / neural / SAPI) and capture mic input."""
 
-    def __init__(self) -> None:
+    def __init__(self, whisper_model: str = "tiny") -> None:
         self._engine = None
         self._recognizer = None
         self._coqui = None
+        self._whisper = None
+        self._whisper_backend: Optional[str] = None
+        self.whisper_model_name = whisper_model
         self._edge_available = _probe_edge_tts()
         self._pyttsx3_available = _probe_pyttsx3()
         self._coqui_available = _probe_coqui()
+        self._faster_whisper_available = _probe_faster_whisper()
+        self._openai_whisper_available = _probe_openai_whisper()
+        self._whisper_available = (
+            self._faster_whisper_available or self._openai_whisper_available
+        )
         self._tts_available = (
             self._edge_available
             or self._pyttsx3_available
@@ -104,6 +130,9 @@ class DesktopVoiceService:
         self._mic_available = self._stt_available and _probe_microphone()
         self.speak_replies: bool = False
         self.tts_engine: str = "edge" if self._edge_available else "pyttsx3"
+        self.stt_engine: str = (
+            "whisper" if self._whisper_available else "google"
+        )
         self.initialized = False
         self.voice_id: Optional[str] = None
         self.clone_wav: Optional[str] = None
@@ -287,6 +316,12 @@ class DesktopVoiceService:
         engine = self.tts_engine
         if cloning:
             engine = "xtts-clone"
+        stt = None
+        if self._mic_available:
+            if self._whisper_available:
+                stt = f"whisper:{self.whisper_model_name}"
+            else:
+                stt = "google"
         return {
             "tts_available": self._tts_available,
             "tts_engine": engine if self._tts_available else None,
@@ -297,6 +332,8 @@ class DesktopVoiceService:
             "clone_wav": self.clone_wav,
             "cloning": cloning,
             "stt_available": self._stt_available,
+            "stt_engine": stt,
+            "whisper_available": self._whisper_available,
             "mic_available": self._mic_available,
             "speak_replies": self.speak_replies,
             "initialized": self.initialized,
@@ -477,6 +514,98 @@ class DesktopVoiceService:
                 continue
         raise RuntimeError("No audio player available")
 
+    def _ensure_whisper(self, *, force_cpu: bool = False) -> bool:
+        if self._whisper is not None and not force_cpu:
+            return True
+        if force_cpu:
+            self._whisper = None
+            self._whisper_backend = None
+
+        if self._faster_whisper_available:
+            try:
+                from faster_whisper import WhisperModel
+
+                # Only try CUDA float16. Pascal / incomplete CUDA toolkits often load
+                # int8/float32 then fail at infer (missing/broken cublas). CPU is safer.
+                attempts: list[tuple[str, str]] = [("cpu", "int8")]
+                if not force_cpu:
+                    try:
+                        import torch
+
+                        if torch.cuda.is_available():
+                            attempts = [("cuda", "float16"), ("cpu", "int8")]
+                    except Exception:
+                        pass
+                last_err: Optional[Exception] = None
+                for device, compute in attempts:
+                    try:
+                        self._whisper = WhisperModel(
+                            self.whisper_model_name,
+                            device=device,
+                            compute_type=compute,
+                        )
+                        self._whisper_backend = "faster_whisper"
+                        self.stt_engine = "whisper"
+                        logger.info(
+                            "Whisper STT ready (faster-whisper %s on %s/%s)",
+                            self.whisper_model_name,
+                            device,
+                            compute,
+                        )
+                        return True
+                    except Exception as e:
+                        last_err = e
+                        logger.debug(
+                            "faster-whisper %s/%s failed: %s", device, compute, e
+                        )
+                if last_err is not None:
+                    logger.warning("faster-whisper load failed: %s", last_err)
+            except Exception as e:
+                logger.warning("faster-whisper load failed: %s", e)
+
+        if self._openai_whisper_available:
+            try:
+                import whisper
+
+                self._whisper = whisper.load_model(self.whisper_model_name)
+                self._whisper_backend = "openai_whisper"
+                self.stt_engine = "whisper"
+                logger.info(
+                    "Whisper STT ready (openai-whisper %s)",
+                    self.whisper_model_name,
+                )
+                return True
+            except Exception as e:
+                logger.warning("openai-whisper load failed: %s", e)
+
+        return False
+
+    def _run_whisper_transcribe(self, path: str) -> Optional[str]:
+        try:
+            if self._whisper_backend == "faster_whisper":
+                segments, _info = self._whisper.transcribe(
+                    path, language="en", beam_size=1
+                )
+                return " ".join(s.text.strip() for s in segments).strip()
+            result = self._whisper.transcribe(path, language="en")
+            return (result.get("text") or "").strip()
+        except Exception as e:
+            logger.warning("Whisper transcribe failed: %s", e)
+            return None
+
+    def _transcribe_wav_path(self, path: str) -> Optional[str]:
+        if not self._ensure_whisper():
+            return None
+        text = self._run_whisper_transcribe(path)
+        if text is not None:
+            return text
+        # Incomplete CUDA runtime (e.g. missing cublas) — fall back to CPU once
+        if self._whisper_backend == "faster_whisper":
+            logger.warning("Whisper GPU path failed; retrying on CPU")
+            if self._ensure_whisper(force_cpu=True):
+                return self._run_whisper_transcribe(path)
+        return None
+
     async def listen_once(
         self,
         timeout: int = 8,
@@ -495,7 +624,25 @@ class DesktopVoiceService:
                     timeout=timeout,
                     phrase_time_limit=phrase_limit,
                 )
+
+            # Prefer local Whisper when available
+            if self._whisper_available:
+                fd, tmp = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+                try:
+                    Path(tmp).write_bytes(audio.get_wav_data())
+                    text = self._transcribe_wav_path(tmp)
+                    if text is not None:
+                        self.stt_engine = "whisper"
+                        return text
+                finally:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+
             try:
+                self.stt_engine = "google"
                 return self._recognizer.recognize_google(audio)
             except sr.UnknownValueError:
                 return ""
