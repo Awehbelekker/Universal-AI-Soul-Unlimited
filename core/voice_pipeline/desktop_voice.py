@@ -103,6 +103,65 @@ def _probe_openai_whisper() -> bool:
         return False
 
 
+_NVIDIA_DLL_PATH_READY = False
+
+
+def _ensure_ctranslate2_cuda_dlls() -> None:
+    """Put pip nvidia-*-cu12 bin dirs on PATH so CTranslate2 can LoadLibrary them.
+
+    Packages may already be installed; Windows still won't find cublas64_12.dll
+    unless these directories are visible to native LoadLibrary (PATH + add_dll_directory).
+    """
+    global _NVIDIA_DLL_PATH_READY
+    if _NVIDIA_DLL_PATH_READY:
+        return
+    try:
+        import os
+        from pathlib import Path
+
+        dirs: list[str] = []
+        for modname in (
+            "nvidia.cuda_runtime",
+            "nvidia.cuda_nvrtc",
+            "nvidia.cublas",
+            "nvidia.cudnn",
+            "nvidia.cufft",
+        ):
+            try:
+                mod = __import__(modname, fromlist=["x"])
+                root = Path(next(iter(mod.__path__)))
+            except Exception:
+                continue
+            for cand in (root / "bin", root / "lib"):
+                if cand.is_dir():
+                    d = str(cand)
+                    dirs.append(d)
+                    try:
+                        os.add_dll_directory(d)
+                    except (OSError, AttributeError):
+                        pass
+        if dirs:
+            os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get(
+                "PATH", ""
+            )
+            # Preload so dependent LoadLibrary calls resolve on Windows
+            try:
+                import ctypes
+
+                for name in ("cudart64_12.dll", "cublasLt64_12.dll", "cublas64_12.dll"):
+                    for d in dirs:
+                        p = Path(d) / name
+                        if p.is_file():
+                            ctypes.WinDLL(str(p))
+                            break
+            except OSError as e:
+                logger.debug("CUDA DLL preload: %s", e)
+        _NVIDIA_DLL_PATH_READY = True
+    except Exception as e:
+        logger.debug("CUDA DLL path setup skipped: %s", e)
+        _NVIDIA_DLL_PATH_READY = True
+
+
 class DesktopVoiceService:
     """Speak replies (clone / neural / SAPI) and capture mic input."""
 
@@ -525,15 +584,21 @@ class DesktopVoiceService:
             try:
                 from faster_whisper import WhisperModel
 
-                # Only try CUDA float16. Pascal / incomplete CUDA toolkits often load
-                # int8/float32 then fail at infer (missing/broken cublas). CPU is safer.
+                # GTX 10-series: float16 usually unsupported; int8/float32 need cuBLAS 12
+                # (pip nvidia-cublas-cu12 + PATH wiring via _ensure_ctranslate2_cuda_dlls).
                 attempts: list[tuple[str, str]] = [("cpu", "int8")]
                 if not force_cpu:
                     try:
                         import torch
 
                         if torch.cuda.is_available():
-                            attempts = [("cuda", "float16"), ("cpu", "int8")]
+                            _ensure_ctranslate2_cuda_dlls()
+                            attempts = [
+                                ("cuda", "float16"),
+                                ("cuda", "int8"),
+                                ("cuda", "float32"),
+                                ("cpu", "int8"),
+                            ]
                     except Exception:
                         pass
                 last_err: Optional[Exception] = None

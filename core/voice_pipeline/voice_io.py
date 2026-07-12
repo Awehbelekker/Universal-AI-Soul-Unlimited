@@ -60,14 +60,28 @@ class VoiceIO:
         if self._faster:
             from faster_whisper import WhisperModel
 
+            # Reuse desktop CUDA DLL PATH wiring when available
+            try:
+                from core.voice_pipeline.desktop_voice import (
+                    _ensure_ctranslate2_cuda_dlls,
+                )
+            except Exception:
+                _ensure_ctranslate2_cuda_dlls = None  # type: ignore
+
             attempts = [("cpu", "int8")]
             if not force_cpu:
                 try:
                     import torch
 
                     if torch.cuda.is_available():
-                        # float16 only on CUDA; other compute types often fail at infer
-                        attempts = [("cuda", "float16"), ("cpu", "int8")]
+                        if _ensure_ctranslate2_cuda_dlls is not None:
+                            _ensure_ctranslate2_cuda_dlls()
+                        attempts = [
+                            ("cuda", "float16"),
+                            ("cuda", "int8"),
+                            ("cuda", "float32"),
+                            ("cpu", "int8"),
+                        ]
                 except Exception:
                     pass
             for device, compute in attempts:
