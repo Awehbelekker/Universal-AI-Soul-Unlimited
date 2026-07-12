@@ -848,7 +848,8 @@ async def main():
         print("Type 'quit' to exit, 'status' for system status")
         print("Commands: 'onboard', 'values', 'personality <mode>'")
         print("Voice: 'voice', 'listen', 'voice status', 'voice set <name>'")
-        print("Clone: 'voice clone <wav>', 'voice clone clear'")
+        print("Clone: 'voice clone <wav|record|demo>', 'voice clone clear'")
+        print("  (Clone = any speaker from audio sample; not personality names)")
         print("-" * 50)
 
         user_id = "default"
@@ -935,28 +936,59 @@ async def main():
                     else:
                         print("\nVoice not initialized.")
                     continue
-                elif user_input.lower() == "voice clone clear":
-                    if soul_ai.desktop_voice:
+                elif user_input.lower().startswith("voice clone"):
+                    if not soul_ai.desktop_voice:
+                        print("\nVoice not available.")
+                        continue
+                    rest = user_input[11:].strip().strip('"')
+                    await soul_ai.desktop_voice.initialize()
+
+                    if not rest or rest.lower() in ("help", "?"):
+                        print(
+                            "\nClone any speaker from a short audio sample "
+                            "(6–15s, one voice, quiet room). Use only with consent.\n"
+                            "  voice clone record     — record from your mic\n"
+                            "  voice clone demo       — Edge Jenny sample (pipeline test)\n"
+                            "  voice clone path.wav   — use an existing file\n"
+                            "  voice clone clear      — back to Edge neural voices\n"
+                            "Personality modes (friendly/calm/…) change reply style and,\n"
+                            "when not cloning, pick different Edge voices — they are not\n"
+                            "separate cloned characters."
+                        )
+                        continue
+
+                    if rest.lower() == "clear":
                         soul_ai.desktop_voice.clear_clone()
                         ctx = await soul_ai._get_user_context(user_id, context=None)
                         ctx.preferences.pop("clone_wav", None)
                         soul_ai._save_user_profile(ctx)
                         print("\nClone voice cleared — back to Edge/neural TTS.")
-                    continue
-                elif user_input.lower().startswith("voice clone "):
-                    if not soul_ai.desktop_voice:
-                        print("\nVoice not available.")
                         continue
-                    path = user_input[12:].strip().strip('"')
-                    await soul_ai.desktop_voice.initialize()
-                    msg = soul_ai.desktop_voice.set_clone_wav(path)
+
+                    if rest.lower() == "record":
+                        print(
+                            "\nRecording ~10s — speak clearly now "
+                            "(one speaker, no music)…"
+                        )
+                        msg = await soul_ai.desktop_voice.record_clone_sample(
+                            seconds=10.0
+                        )
+                    elif rest.lower() == "demo":
+                        print("\nBuilding Edge demo sample for clone pipeline test…")
+                        msg = await soul_ai.desktop_voice.make_edge_demo_sample()
+                    else:
+                        msg = soul_ai.desktop_voice.set_clone_wav(rest)
+
                     print(f"\n{msg}")
                     if soul_ai.desktop_voice.clone_wav:
                         ctx = await soul_ai._get_user_context(user_id, context=None)
                         ctx.preferences["clone_wav"] = soul_ai.desktop_voice.clone_wav
                         soul_ai._save_user_profile(ctx)
                         soul_ai.desktop_voice.speak_replies = True
-                        print("Voice replies ON. Say something to hear the clone (or Edge fallback).")
+                        print(
+                            "Voice replies ON. Chat to hear the clone "
+                            "(first XTTS run downloads the model — may take a while)."
+                        )
                     continue
                 elif user_input.lower().startswith("voice set "):
                     if not soul_ai.desktop_voice:

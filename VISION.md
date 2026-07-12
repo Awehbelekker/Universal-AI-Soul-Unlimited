@@ -114,7 +114,7 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 |------------|--------|-------|
 | Edge neural TTS (desktop) | **Done** | Default good voice |
 | Coqui / XTTS install on Windows | **Done** | `coqui-tts` via `scripts/setup_voice_clone.py` |
-| Voice clone from WAV | **Partial** | CLI wired; needs user sample + first model download |
+| Voice clone from WAV | **Partial** | CLI: `voice clone <file|record|demo>`; needs sample + first model download |
 | Offline Whisper STT | **Missing** | Mic defaults to Google recognition |
 | ElevenLabs / Deepgram | **Partial** | Hooks / privacy gates; not primary |
 

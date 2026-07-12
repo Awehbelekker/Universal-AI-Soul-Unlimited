@@ -155,6 +155,11 @@ class DesktopVoiceService:
         if self._coqui and getattr(self._coqui, "initialized", False):
             return True
         try:
+            # XTTS is CPML (non-commercial). Auto-ack so CLI/desktop is non-interactive.
+            # See https://coqui.ai/cpml — set COQUI_TOS_AGREED=0 to force the prompt.
+            if os.environ.get("COQUI_TOS_AGREED") is None:
+                os.environ["COQUI_TOS_AGREED"] = "1"
+
             from core.engines.coqui_tts_optimizer import CoquiTTSOptimizer
 
             use_gpu = False
@@ -192,10 +197,90 @@ class DesktopVoiceService:
                 "  python scripts/setup_voice_clone.py\n"
                 "Then restart and use 'voice' — cloning will activate."
             )
-        return f"Clone voice set: {p}"
+        return (
+            f"Clone voice set: {p}\n"
+            "XTTS clones this speaker's timbre (any person you have a clean "
+            "sample of — use only with consent). Personality modes still "
+            "change reply style; they do not swap the cloned voice."
+        )
 
     def clear_clone(self) -> None:
         self.clone_wav = None
+
+    async def record_clone_sample(
+        self,
+        seconds: float = 10.0,
+        output_dir: Optional[Path] = None,
+    ) -> str:
+        """
+        Record a short mic sample for XTTS cloning.
+
+        Speak clearly for ~6–15s (one speaker, quiet room). Returns status.
+        """
+        if not self._mic_available or not self._stt_available:
+            return (
+                "Microphone not available. Install: "
+                "pip install SpeechRecognition pyaudio"
+            )
+
+        import speech_recognition as sr
+
+        if not self._recognizer:
+            self._recognizer = sr.Recognizer()
+
+        out_dir = Path(output_dir or Path("data") / "voice_samples")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "clone_ref.wav"
+        phrase_limit = max(3, int(seconds))
+
+        def _record() -> bytes:
+            with sr.Microphone() as source:
+                self._recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                audio = self._recognizer.listen(
+                    source,
+                    timeout=8,
+                    phrase_time_limit=phrase_limit,
+                )
+            return audio.get_wav_data()
+
+        try:
+            wav_bytes = await asyncio.to_thread(_record)
+        except Exception as e:
+            return f"Record failed: {e}"
+
+        if not wav_bytes or len(wav_bytes) < 1000:
+            return "Recording too short — speak longer (aim for 6–15 seconds)."
+
+        out_path.write_bytes(wav_bytes)
+        return self.set_clone_wav(str(out_path))
+
+    async def make_edge_demo_sample(
+        self,
+        voice: str = "en-US-JennyNeural",
+        output_dir: Optional[Path] = None,
+    ) -> str:
+        """Synthesize a demo reference clip via Edge TTS (proves clone pipeline)."""
+        if not self._edge_available:
+            return "edge-tts not installed — cannot build demo sample."
+
+        import edge_tts
+
+        out_dir = Path(output_dir or Path("data") / "voice_samples")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "demo_edge_ref.mp3"
+        script = (
+            "Hello, this is a short voice sample for cloning. "
+            "I am speaking clearly so Universal Soul can learn this voice. "
+            "Please clone only voices you have permission to use."
+        )
+
+        try:
+            communicate = edge_tts.Communicate(script, voice)
+            await communicate.save(str(out_path))
+        except Exception as e:
+            return f"Demo sample failed: {e}"
+
+        return self.set_clone_wav(str(out_path))
 
     def status(self) -> Dict[str, Any]:
         cloning = bool(self.clone_wav) and self._coqui_available

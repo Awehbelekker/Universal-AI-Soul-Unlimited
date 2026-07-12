@@ -76,3 +76,7 @@ models/hrm-checkpoints/*.pth
 # Test results
 benchmark_results/
 *.json
+
+# Local voice clone samples
+data/voice_samples/
+

@@ -36,7 +36,7 @@
 - Bundled PaddleOCR (runtime optional import in `core/automation/ocr_engine.py`)
 - Full personality/values assessment services (CLI/onboarding covers basics)
 - Offline Whisper STT (mic uses Google recognition by default)
-- First XTTS model download happens on first `voice clone` (needs a clean 6–15s WAV)
+- First XTTS model download (~2GB) on first clone — may take a while; CPML non-commercial terms apply
 - Real CoAct OS execution (still simulated)
 - AES-256 encryption (config flag only)
 
