@@ -26,6 +26,7 @@ Today’s stack includes:
 | Values / personality / onboarding | Basic CLI + persisted profiles |
 | Voice (Edge + optional XTTS clone) | Desktop working; clone needs a sample WAV |
 | Android APK (`main.py` / `app_main.py`) | UI + AI bridge (requires runtime backend) |
+| **PWA thin client** (`web/` + `serve_pwa.py`) | Phone/desktop browser → LAN Ollama via proxy |
 | Model weights | Not in repo — download via Ollama |
 | ThinkMesh / real CoAct / overlay / OCR / AES | Partial or not implemented — see [VISION.md](VISION.md) |
 
@@ -65,6 +66,25 @@ buildozer -v android debug
 Or use GitHub Actions: [.github/workflows/build-apk.yml](.github/workflows/build-apk.yml)
 
 The APK uses a lightweight dependency set. Full on-device inference requires additional setup — see [ANDROID_BUILD_GUIDE.md](ANDROID_BUILD_GUIDE.md).
+
+---
+
+## Quick Start (PWA — phone over Wi‑Fi)
+
+Easier than APK for LAN Ollama testing:
+
+```bash
+# PC: allow LAN access to Ollama (restart Ollama after)
+# Windows PowerShell example:
+#   $env:OLLAMA_HOST="0.0.0.0"
+
+python scripts/serve_pwa.py
+```
+
+Open `http://127.0.0.1:8765` on the PC, or `http://<your-pc-lan-ip>:8765` on your phone.  
+Use **Settings** to set the Ollama host, **Test**, then chat. On mobile Chrome/Edge: **Add to Home Screen** for installable PWA.
+
+Smoke: `python scripts/smoke_pwa.py`
 
 ---
 

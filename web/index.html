@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1c1a" />
+  <meta name="description" content="Universal Soul AI — local thin client for Ollama" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <title>Universal Soul AI</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <div>
+          <h1>Universal Soul</h1>
+          <p id="modeLine" class="sub">Thin client</p>
+        </div>
+      </div>
+      <button type="button" id="settingsBtn" class="ghost" aria-label="Settings">Settings</button>
+    </header>
+
+    <main id="chat" class="chat" aria-live="polite"></main>
+
+    <form id="composer" class="composer" autocomplete="off">
+      <input id="message" type="text" placeholder="Message…" enterkeyhint="send" required />
+      <button type="submit" id="sendBtn">Send</button>
+    </form>
+  </div>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" id="settingsForm" class="settings">
+      <h2>Ollama / LAN</h2>
+      <p class="hint">
+        Phone on Wi‑Fi: use your PC’s LAN IP. This PWA talks through a local proxy
+        so the browser isn’t blocked by CORS.
+      </p>
+      <label>
+        Ollama URL / host
+        <input id="ollamaUrl" name="ollamaUrl" placeholder="192.168.1.10 or http://127.0.0.1:11434" />
+      </label>
+      <label>
+        Model
+        <input id="ollamaModel" name="ollamaModel" placeholder="llama3.2:3b" />
+      </label>
+      <p id="settingsStatus" class="status" role="status"></p>
+      <div class="row">
+        <button type="button" id="testBtn" class="ghost">Test</button>
+        <button type="submit" id="saveBtn" value="save">Save</button>
+        <button type="submit" class="ghost" value="cancel">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
