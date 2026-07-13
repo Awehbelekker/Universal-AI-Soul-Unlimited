@@ -87,3 +87,7 @@ data/automation_audit.jsonl
 # Android / thin-client local settings
 data/android_settings.json
 
+
+# ThinkMesh local cache
+.thinkmesh_cache/
+
