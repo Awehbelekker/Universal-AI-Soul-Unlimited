@@ -46,24 +46,84 @@ def normalize_ollama_url(url: str) -> str:
 
 
 def _load_clone_from_profile() -> Optional[str]:
+    profile = _read_default_profile()
+    if not profile:
+        return None
+    prefs = profile.get("preferences") or {}
+    wav = prefs.get("clone_wav")
+    if wav and Path(wav).is_file():
+        return str(wav)
+    return None
+
+
+def _read_default_profile() -> Optional[Dict[str, Any]]:
     profiles = ROOT / "data" / "user_profiles"
     if not profiles.is_dir():
         return None
-    # Prefer default.json / default_* then any profile with clone_wav
     candidates = sorted(profiles.glob("*.json"))
-    preferred = [p for p in candidates if "default" in p.stem.lower()] + [
-        p for p in candidates if "default" not in p.stem.lower()
+    preferred = [p for p in candidates if p.stem.lower() == "default"] + [
+        p for p in candidates if p.stem.lower() != "default"
     ]
     for path in preferred:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            prefs = data.get("preferences") or data
-            wav = prefs.get("clone_wav")
-            if wav and Path(wav).is_file():
-                return str(wav)
+            return json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
     return None
+
+
+def _default_profile_path() -> Path:
+    return ROOT / "data" / "user_profiles" / "default.json"
+
+
+def companion_profile_get() -> Dict[str, Any]:
+    data = _read_default_profile() or {}
+    prefs = data.get("preferences") or {}
+    tone = prefs.get("tone") or data.get("personality_mode") or "friendly"
+    return {
+        "ok": True,
+        "companion_name": prefs.get("companion_name") or "Universal Soul",
+        "tone": tone,
+        "personality_mode": data.get("personality_mode") or tone,
+        "clone_wav": prefs.get("clone_wav"),
+        "has_clone": bool(
+            prefs.get("clone_wav") and Path(str(prefs.get("clone_wav"))).is_file()
+        ),
+    }
+
+
+def companion_profile_save(body: Dict[str, Any]) -> Dict[str, Any]:
+    path = _default_profile_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = {}
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+    prefs = dict(existing.get("preferences") or {})
+    name = (body.get("companion_name") or prefs.get("companion_name") or "Universal Soul")
+    name = str(name).strip()[:40] or "Universal Soul"
+    tone = (body.get("tone") or prefs.get("tone") or "friendly").strip().lower()
+    allowed = {
+        "professional",
+        "friendly",
+        "energetic",
+        "calm",
+        "creative",
+        "analytical",
+    }
+    if tone not in allowed:
+        tone = "friendly"
+    prefs["companion_name"] = name
+    prefs["tone"] = tone
+    existing["user_id"] = existing.get("user_id") or "default"
+    existing["preferences"] = prefs
+    existing["personality_mode"] = tone
+    if "values_profile" not in existing:
+        existing["values_profile"] = None
+    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    return companion_profile_get()
 
 
 def get_voice_service():
@@ -165,15 +225,30 @@ class PWAHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/proxy/"):
             return self._proxy("GET")
-        if self.path.split("?", 1)[0] == "/api/voice-status":
+        route = self.path.split("?", 1)[0]
+        if route == "/api/voice-status":
             return self._voice_status()
+        if route == "/api/profile":
+            return self._json(200, companion_profile_get())
         return super().do_GET()
 
     def do_POST(self):
         if self.path.startswith("/proxy/"):
             return self._proxy("POST")
-        if self.path.split("?", 1)[0] == "/api/speak":
+        route = self.path.split("?", 1)[0]
+        if route == "/api/speak":
             return self._speak()
+        if route == "/api/profile":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except Exception:
+                return self._json(400, {"error": "invalid JSON"})
+            try:
+                return self._json(200, companion_profile_save(body))
+            except Exception as exc:
+                return self._json(500, {"error": str(exc)})
         self.send_error(405)
 
     def _json(self, code: int, payload: Dict[str, Any]) -> None:

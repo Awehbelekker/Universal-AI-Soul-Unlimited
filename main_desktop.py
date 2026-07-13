@@ -765,27 +765,36 @@ class UniversalSoulAI:
                     profile["boundaries"].append(stripped)
 
     def _format_values_context(self, user_context: UserContext) -> str:
-        """Build a prompt prefix from the user's values profile."""
-        profile = user_context.values_profile
-        if not profile:
-            return ""
-
-        lines = [
-            "[User values & boundaries — honor these in every reply:]",
-        ]
-        core = profile.get("core_values") or []
-        bounds = profile.get("boundaries") or []
-        if core:
-            lines.append("Core values: " + "; ".join(core))
-        if bounds:
-            lines.append("Boundaries: " + "; ".join(bounds))
-        recent = profile.get("notes") or []
-        if recent:
-            lines.append("Recent context: " + recent[-1])
-        lines.append(
-            "If the user asks about values or boundaries, confirm what you "
-            "remember and invite them to add or refine rules together."
+        """Build a prompt prefix from companion identity + values profile."""
+        prefs = user_context.preferences or {}
+        name = (prefs.get("companion_name") or "").strip() or "Universal Soul"
+        tone = (
+            prefs.get("tone")
+            or getattr(user_context.personality_mode, "value", "friendly")
         )
+        lines = [
+            f"[You are {name}, the user's Universal Soul companion.]",
+            f"Speak in a {tone} tone. Use your name when introducing yourself.",
+        ]
+
+        profile = user_context.values_profile
+        if profile:
+            lines.append(
+                "[User values & boundaries — honor these in every reply:]"
+            )
+            core = profile.get("core_values") or []
+            bounds = profile.get("boundaries") or []
+            if core:
+                lines.append("Core values: " + "; ".join(core))
+            if bounds:
+                lines.append("Boundaries: " + "; ".join(bounds))
+            recent = profile.get("notes") or []
+            if recent:
+                lines.append("Recent context: " + recent[-1])
+            lines.append(
+                "If the user asks about values or boundaries, confirm what you "
+                "remember and invite them to add or refine rules together."
+            )
         return "\n".join(lines)
     
     async def _update_user_context(self, user_context: UserContext, 
@@ -821,18 +830,26 @@ class UniversalSoulAI:
 async def _run_onboarding_wizard(soul_ai: UniversalSoulAI, ctx: UserContext) -> None:
     """
     Minimal desktop CLI onboarding.
-    Captures: personality mode + core values + boundaries.
+    Captures: companion name + personality mode + core values + boundaries.
     """
     print("\n--- Onboarding ---")
 
-    # Personality
-    print("\nChoose a personality mode:")
+    current_name = (ctx.preferences or {}).get("companion_name") or "Universal Soul"
+    name = input(f"\nCompanion name [{current_name}]: ").strip()
+    if name:
+        ctx.preferences["companion_name"] = name[:40]
+    elif "companion_name" not in ctx.preferences:
+        ctx.preferences["companion_name"] = "Universal Soul"
+
+    # Personality / tone
+    print("\nChoose a personality tone:")
     print("professional / friendly / energetic / calm / creative / analytical")
-    pm = input("Personality (enter to keep current): ").strip().lower()
+    pm = input("Tone (enter to keep current): ").strip().lower()
     if pm:
         for mode in PersonalityMode:
             if mode.value == pm:
                 ctx.personality_mode = mode
+                ctx.preferences["tone"] = mode.value
                 break
 
     # Values
@@ -859,7 +876,11 @@ async def _run_onboarding_wizard(soul_ai: UniversalSoulAI, ctx: UserContext) -> 
 
     ctx.preferences["onboarding_complete"] = True
     soul_ai._save_user_profile(ctx)
-    print("\nOnboarding saved.")
+    print(
+        f"\nOnboarding saved. Companion: "
+        f"{ctx.preferences.get('companion_name')} "
+        f"({ctx.personality_mode.value})"
+    )
 
 
 # Main execution
@@ -880,10 +901,10 @@ async def main():
 
         print("\nUniversal Soul AI - Interactive Mode")
         print("Type 'quit' to exit, 'status' for system status")
-        print("Commands: 'onboard', 'values', 'personality <mode>'")
+        print("Commands: 'onboard', 'values', 'name <name>', 'personality <mode>'")
         print("Voice: 'voice', 'listen', 'voice status', 'voice set <name>'")
         print("Clone: 'voice clone <wav|record|demo>', 'voice clone clear'")
-        print("  (Clone = any speaker from audio sample; not personality names)")
+        print("  (Clone = any speaker from audio sample; not companion names)")
         print("CoAct: 'automate list|open|note|audit|help' (real OS actions)")
         print("ThinkMesh: 'think <question>' (planner/critic/synth multipass)")
         print("-" * 50)
@@ -916,10 +937,26 @@ async def main():
                     profile = ctx.values_profile or {}
                     core = profile.get("core_values") or []
                     bounds = profile.get("boundaries") or []
-                    print("\nSaved values & boundaries:")
+                    cname = (ctx.preferences or {}).get("companion_name") or "Universal Soul"
+                    print("\nSaved companion & values:")
+                    print(f"- Name: {cname}")
                     print(f"- Core values: {', '.join(core) if core else '(none)'}")
                     print(f"- Boundaries: {', '.join(bounds) if bounds else '(none)'}")
-                    print(f"- Personality: {ctx.personality_mode.value}")
+                    print(f"- Personality/tone: {ctx.personality_mode.value}")
+                    continue
+                elif user_input.lower() == "name" or user_input.lower().startswith(
+                    "name "
+                ):
+                    ctx = await soul_ai._get_user_context(user_id, context=None)
+                    rest = user_input[4:].strip().strip('"')
+                    if not rest:
+                        current = (ctx.preferences or {}).get("companion_name") or "Universal Soul"
+                        print(f"\nCompanion name: {current}")
+                        print("Usage: name Aria")
+                        continue
+                    ctx.preferences["companion_name"] = rest[:40]
+                    soul_ai._save_user_profile(ctx)
+                    print(f"\nCompanion name set to: {ctx.preferences['companion_name']}")
                     continue
                 elif user_input.lower().startswith("personality "):
                     mode_raw = user_input.split(" ", 1)[1].strip().lower()
@@ -928,10 +965,11 @@ async def main():
                     for mode in PersonalityMode:
                         if mode.value == mode_raw:
                             ctx.personality_mode = mode
+                            ctx.preferences["tone"] = mode.value
                             ctx.preferences["onboarding_complete"] = True
                             soul_ai._save_user_profile(ctx)
                             matched = True
-                            print(f"\nPersonality set to: {mode.value}")
+                            print(f"\nPersonality/tone set to: {mode.value}")
                             break
                     if not matched:
                         print("\nUnknown personality. Try: professional, friendly, energetic, calm, creative, analytical")

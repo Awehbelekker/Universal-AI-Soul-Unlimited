@@ -158,6 +158,54 @@ function systemPrompt() {
   );
 }
 
+async function syncProfileFromPc() {
+  try {
+    const res = await fetch("/api/profile");
+    const data = await res.json();
+    if (!data.ok) return;
+    let changed = false;
+    // Prefer PC profile when local still has defaults
+    if (
+      (!localStorage.getItem(STORAGE_KEY) &&
+        !localStorage.getItem("usa_pwa_settings_v1")) ||
+      state.settings.companionName === DEFAULTS.companionName
+    ) {
+      if (data.companion_name) {
+        state.settings.companionName = data.companion_name;
+        changed = true;
+      }
+    }
+    if (data.tone && TONE_HINTS[data.tone]) {
+      // Only overwrite tone if never customized locally after migrate
+      if (!localStorage.getItem(STORAGE_KEY + ":tone_set")) {
+        state.settings.tone = data.tone;
+        changed = true;
+      }
+    }
+    if (changed) {
+      state.settings = saveSettings(state.settings);
+      applyBrand();
+    }
+  } catch {
+    /* offline PC profile is optional */
+  }
+}
+
+async function pushProfileToPc() {
+  try {
+    await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        companion_name: state.settings.companionName,
+        tone: state.settings.tone,
+      }),
+    });
+  } catch {
+    /* best-effort sync */
+  }
+}
+
 async function refreshVoiceLine() {
   try {
     const res = await fetch("/api/voice-status");
@@ -359,14 +407,18 @@ settingsForm.addEventListener("submit", (e) => {
     tone: toneInput.value,
     speakReplies: speakInput.checked,
   });
+  localStorage.setItem(STORAGE_KEY + ":tone_set", "1");
   applyBrand();
+  pushProfileToPc();
   settingsStatus.className = "status ok";
-  settingsStatus.textContent = "Saved locally on this device.";
+  settingsStatus.textContent = "Saved locally + synced to PC profile.";
   setMode(`${companionLabel()} · saved`);
   dialog.close();
 });
 
 async function boot() {
+  applyBrand();
+  await syncProfileFromPc();
   applyBrand();
   addBubble(
     "system",

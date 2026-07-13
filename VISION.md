@@ -91,7 +91,7 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 | Adaptive routing (fast/standard/deep) | **Done** | `core/routing/` |
 | Session / MemGPT-style memory | **Partial** | Works for continuity; not full MemGPT product |
 | Personality modes (CLI) | **Partial** | Desktop CLI + PWA tone selector |
-| Companion display name | **Partial** | PWA Settings name; desktop profile TBD |
+| Companion display name | **Partial** | PWA Settings + desktop `name` / onboard; synced via `/api/profile` |
 | Values + onboarding | **Partial** | Wizard + persist; not full 15-question service |
 | Family coordination | **Missing** | Config / docs only |
 
