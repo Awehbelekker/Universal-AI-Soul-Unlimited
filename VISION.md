@@ -129,8 +129,8 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 | Capability | Status | Notes |
 |------------|--------|-------|
 | Desktop orchestrator | **Done** | Primary product surface |
-| Android chat UI | **Partial** | Kivy shell |
-| Android → network Ollama | **Partial** | Fallback path; depends on LAN/host |
+| Android chat UI | **Partial** | Kivy shell + Settings |
+| Android → network Ollama | **Partial** | URL/model persist, Test, retries; needs device APK proof |
 | Android on-device inference | **Missing** | |
 | 360° overlay | **Missing** | Config only |
 | Bundled OCR | **Missing** | Optional import only |
@@ -150,7 +150,7 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 1. ~~**Desktop companion polish**~~ — Edge/XTTS + `voice clone` path proven  
 2. ~~**Offline STT**~~ — Whisper local for mic (`faster-whisper`; Google fallback)  
 3. ~~**Real CoAct slice**~~ — allowlisted list/open/note with consent + audit  
-4. **Android thin client** — reliable LAN/cloud-to-desktop Ollama; settings screen  
+4. ~~**Android thin client**~~ — Settings + persisted LAN Ollama client (APK device proof still open)  
 5. **ThinkMesh depth** — make orchestration earn its place vs single HRM path  
 6. **On-device LIGHT/STANDARD** — only after thin client is solid  
 7. **Overlay / OCR / sync / crypto** — after core companion loop is trusted  

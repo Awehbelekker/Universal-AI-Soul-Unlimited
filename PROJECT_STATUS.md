@@ -13,7 +13,7 @@
 | Core engine modules | 75% |
 | Desktop end-to-end | 70% |
 | thinkmesh_core integration | 40% |
-| Android production app | 30% |
+| Android production app | 40% |
 | Tests / CI alignment | 50% |
 | **Ultimate Soul (vs VISION.md)** | **~45–55%** |
 
@@ -26,6 +26,7 @@
 - Desktop voice: **Edge neural TTS** default; **XTTS cloning** via `voice clone <wav>` after `python scripts/setup_voice_clone.py`
 - Offline STT: **faster-whisper** preferred for `listen` / mic; Google recognition only as fallback
 - CoAct real slice: `automate list|open|note` under `data/` sandbox with consent prompt + `data/automation_audit.jsonl`
+- Android thin client: Settings screen for Ollama URL/model, persist + Test connection (`app_main.py`)
 - `python smoke_test_ollama.py` / `python scripts/setup_ollama.py`
 - Benchmark suite under `benchmarks/`
 - GitHub Actions APK + benchmark workflows
@@ -49,6 +50,6 @@ Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational
 
 ## Next milestones
 
-1. Android thin client reliability (network Ollama)
-2. Expand CoAct allowlist carefully (more real actions)
-3. Optional: ThinkMesh depth, on-device models, overlay / OCR / sync
+1. Expand CoAct allowlist carefully (more real actions)
+2. Optional: ThinkMesh depth, on-device models, overlay / OCR / sync
+3. APK build verification of Settings → LAN Ollama on a real device

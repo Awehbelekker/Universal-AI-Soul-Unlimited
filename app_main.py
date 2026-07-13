@@ -1,19 +1,27 @@
 """
 Universal Soul AI - Android App Entry Point
 Kivy UI with UniversalSoulAI backend, network Ollama fallback, or demo mode.
+
+Thin-client focus: persist Ollama URL/model, Settings screen, resilient LAN checks.
 """
+from __future__ import annotations
+
 import asyncio
 import json
 import os
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlparse
 
 # Prefer config / env for network Ollama (phone → PC on LAN)
 _DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 _DEFAULT_OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+_SETTINGS_NAME = "android_settings.json"
 
 _DEMO_RESPONSES = [
     "That's an interesting point! AI backend is starting or unavailable.",
@@ -23,43 +31,172 @@ _DEMO_RESPONSES = [
 ]
 
 
-def _load_ollama_settings():
-    """Read ollama URL/model from config if present."""
+def normalize_ollama_url(url: str) -> str:
+    """Accept host, host:port, or full URL; default port 11434."""
+    u = (url or "").strip()
+    if not u:
+        return _DEFAULT_OLLAMA_URL.rstrip("/")
+    if "://" not in u:
+        u = "http://" + u
+    u = u.rstrip("/")
+    parsed = urlparse(u)
+    host = parsed.hostname
+    if not host:
+        return _DEFAULT_OLLAMA_URL.rstrip("/")
+    port = parsed.port
+    if port is None:
+        port = 11434
+    scheme = parsed.scheme or "http"
+    return f"{scheme}://{host}:{port}"
+
+
+def _candidate_settings_paths(user_data_dir: Optional[str] = None) -> Tuple[Path, ...]:
+    paths = []
+    if user_data_dir:
+        paths.append(Path(user_data_dir) / _SETTINGS_NAME)
+    root = Path(__file__).resolve().parent
+    paths.append(root / "data" / _SETTINGS_NAME)
+    paths.append(Path("data") / _SETTINGS_NAME)
+    # Deduplicate while preserving order
+    seen = set()
+    out = []
+    for p in paths:
+        key = str(p.resolve()) if p.parent.exists() else str(p)
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return tuple(out)
+
+
+def load_ollama_settings(
+    user_data_dir: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Load URL/model: env → saved settings → config JSON → defaults."""
     url = _DEFAULT_OLLAMA_URL
     model = _DEFAULT_OLLAMA_MODEL
+    env_url = os.environ.get("OLLAMA_URL")
+    env_model = os.environ.get("OLLAMA_MODEL")
+
+    for path in _candidate_settings_paths(user_data_dir):
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            url = data.get("ollama_url", url)
+            model = data.get("ollama_model", model)
+            break
+        except Exception:
+            continue
+
     for candidate in (
         Path("config/universal_soul.json"),
         Path(__file__).resolve().parent / "config" / "universal_soul.json",
     ):
-        if not candidate.exists():
+        if not candidate.is_file():
             continue
         try:
             data = json.loads(candidate.read_text(encoding="utf-8"))
             hrm = data.get("hrm", {})
-            url = hrm.get("ollama_url", url)
-            model = hrm.get("ollama_model", model)
+            # Saved settings already applied; config fills gaps only if still default
+            if not any(
+                p.is_file() for p in _candidate_settings_paths(user_data_dir)
+            ):
+                url = hrm.get("ollama_url", url)
+                model = hrm.get("ollama_model", model)
             break
         except Exception:
             pass
-    return url.rstrip("/"), model
+
+    # Explicit env wins (useful for desktop smoke / CI)
+    if env_url:
+        url = env_url
+    if env_model:
+        model = env_model
+
+    return normalize_ollama_url(url), (model or _DEFAULT_OLLAMA_MODEL).strip()
+
+
+def save_ollama_settings(
+    url: str,
+    model: str,
+    user_data_dir: Optional[str] = None,
+) -> Path:
+    """Persist settings to the first writable candidate path."""
+    payload = {
+        "ollama_url": normalize_ollama_url(url),
+        "ollama_model": (model or _DEFAULT_OLLAMA_MODEL).strip(),
+        "updated_at": time.time(),
+    }
+    last_err: Optional[Exception] = None
+    for path in _candidate_settings_paths(user_data_dir):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return path
+        except Exception as e:
+            last_err = e
+            continue
+    raise OSError(f"Could not save settings: {last_err}")
 
 
 class OllamaClient:
-    """Minimal synchronous Ollama HTTP client for Android fallback."""
+    """Minimal synchronous Ollama HTTP client for Android thin-client mode."""
 
     def __init__(self, base_url: str, model: str):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
+        self.base_url = normalize_ollama_url(base_url)
+        self.model = (model or _DEFAULT_OLLAMA_MODEL).strip()
 
-    def healthy(self) -> bool:
-        try:
-            req = urllib.request.Request(f"{self.base_url}/api/tags")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                return resp.status == 200
-        except Exception:
-            return False
+    def configure(self, base_url: str, model: str) -> None:
+        self.base_url = normalize_ollama_url(base_url)
+        self.model = (model or _DEFAULT_OLLAMA_MODEL).strip()
 
-    def chat(self, message: str, timeout: int = 90) -> str:
+    def healthy(self, timeout: float = 3.0, retries: int = 2) -> bool:
+        return self.probe(timeout=timeout, retries=retries)["ok"]
+
+    def probe(self, timeout: float = 3.0, retries: int = 2) -> Dict[str, Any]:
+        """Return {ok, error, models?, latency_ms} for Settings UI."""
+        last_err = "unreachable"
+        url = f"{self.base_url}/api/tags"
+        for attempt in range(max(1, retries)):
+            started = time.time()
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "UniversalSoulAI/android"},
+                    method="GET",
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    raw = resp.read().decode("utf-8")
+                    data = json.loads(raw) if raw else {}
+                    models = [
+                        m.get("name")
+                        for m in data.get("models", [])
+                        if isinstance(m, dict) and m.get("name")
+                    ]
+                    return {
+                        "ok": resp.status == 200,
+                        "error": None,
+                        "models": models,
+                        "latency_ms": int((time.time() - started) * 1000),
+                        "url": self.base_url,
+                    }
+            except Exception as exc:
+                last_err = str(exc)
+                if attempt + 1 < retries:
+                    time.sleep(0.35 * (attempt + 1))
+        return {
+            "ok": False,
+            "error": last_err,
+            "models": [],
+            "latency_ms": None,
+            "url": self.base_url,
+            "hint": (
+                "On the PC run Ollama bound to LAN "
+                "(OLLAMA_HOST=0.0.0.0) and allow port 11434."
+            ),
+        }
+
+    def chat(self, message: str, timeout: int = 90, retries: int = 2) -> str:
         payload = json.dumps(
             {
                 "model": self.model,
@@ -71,15 +208,26 @@ class OllamaClient:
                 "options": {"num_predict": 256, "temperature": 0.7},
             }
         ).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.base_url}/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return (data.get("response") or "").strip() or "(empty response)"
+        last_err: Optional[Exception] = None
+        for attempt in range(max(1, retries)):
+            try:
+                req = urllib.request.Request(
+                    f"{self.base_url}/api/generate",
+                    data=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": "UniversalSoulAI/android",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                return (data.get("response") or "").strip() or "(empty response)"
+            except Exception as exc:
+                last_err = exc
+                if attempt + 1 < retries:
+                    time.sleep(0.4 * (attempt + 1))
+        raise last_err or RuntimeError("Ollama chat failed")
 
 
 class AIBackend:
@@ -91,22 +239,53 @@ class AIBackend:
         self._soul = None
         self._ready = threading.Event()
         self._error = None
-        self._ollama = None
+        self._ollama: Optional[OllamaClient] = None
         self._mode = "demo"  # full | ollama | demo
+        self._user_data_dir: Optional[str] = None
+
+    def set_user_data_dir(self, path: str) -> None:
+        self._user_data_dir = path
 
     def start(self):
-        url, model = _load_ollama_settings()
+        url, model = load_ollama_settings(self._user_data_dir)
         self._ollama = OllamaClient(url, model)
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
         self._ready.wait(timeout=30)
+        self.refresh_mode()
 
+    def refresh_mode(self) -> str:
         if self._soul is not None and getattr(self._soul, "is_initialized", False):
             self._mode = "full"
-        elif self._ollama.healthy():
+        elif self._ollama and self._ollama.healthy():
             self._mode = "ollama"
         else:
             self._mode = "demo"
+        return self._mode
+
+    def apply_ollama_settings(self, url: str, model: str) -> Dict[str, Any]:
+        """Save + apply + probe. Returns probe result."""
+        path = save_ollama_settings(url, model, self._user_data_dir)
+        if self._ollama is None:
+            self._ollama = OllamaClient(url, model)
+        else:
+            self._ollama.configure(url, model)
+        probe = self._ollama.probe()
+        if self._mode != "full":
+            self._mode = "ollama" if probe.get("ok") else "demo"
+        probe["saved_to"] = str(path)
+        probe["model"] = self._ollama.model
+        return probe
+
+    def settings_snapshot(self) -> Dict[str, str]:
+        if self._ollama:
+            return {
+                "ollama_url": self._ollama.base_url,
+                "ollama_model": self._ollama.model,
+                "mode": self._mode,
+            }
+        url, model = load_ollama_settings(self._user_data_dir)
+        return {"ollama_url": url, "ollama_model": model, "mode": self._mode}
 
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()
@@ -150,6 +329,7 @@ class AIBackend:
             try:
                 return self._ollama.chat(message)
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                self.refresh_mode()
                 return f"[Ollama error: {exc}] {self._fallback(message)}"
 
         return self._fallback(message)
@@ -159,9 +339,10 @@ class AIBackend:
         if "hello" in message_lower or "hi" in message_lower:
             return "Hello! Universal Soul AI is loading or using demo mode."
         if "help" in message_lower:
+            url = self._ollama.base_url if self._ollama else "n/a"
             return (
                 "Type any message. Modes: full stack, network Ollama, or demo. "
-                f"Set OLLAMA_URL (now {self._ollama.base_url if self._ollama else 'n/a'})."
+                f"Open Settings to set Ollama URL (now {url})."
             )
         if self._error:
             return f"Backend unavailable ({self._error}). Using demo mode."
@@ -192,7 +373,7 @@ def main():
             )
             self.layout.add_widget(title)
 
-            scroll = ScrollView(size_hint_y=0.7)
+            scroll = ScrollView(size_hint_y=0.65)
             self.chat_display = Label(
                 text=(
                     "Welcome to Universal Soul AI!\n\n"
@@ -228,7 +409,8 @@ def main():
             )
             self.layout.add_widget(self.status_label)
 
-            btn_box = BoxLayout(size_hint_y=0.05, spacing=5)
+            btn_box = BoxLayout(size_hint_y=0.1, spacing=5)
+            btn_box.add_widget(Button(text="Settings", on_press=self.open_settings))
             btn_box.add_widget(Button(text="About", on_press=self.show_about))
             btn_box.add_widget(Button(text="Clear", on_press=self.clear_chat))
             self.layout.add_widget(btn_box)
@@ -258,16 +440,147 @@ def main():
             self.message_count = 0
             self.status_label.text = "Status: Ready"
 
+        def open_settings(self, instance):
+            app = App.get_running_app()
+            settings = self.manager.get_screen("settings")
+            settings.load_from_backend(app.backend)
+            self.manager.current = "settings"
+
         def show_about(self, instance):
             app = App.get_running_app()
-            url = app.backend._ollama.base_url if app.backend._ollama else "n/a"
+            snap = app.backend.settings_snapshot()
             self.chat_display.text += (
-                "\n[b]Universal Soul AI v1.0[/b]\n"
+                "\n[b]Universal Soul AI — Android thin client[/b]\n"
                 "Modes: full stack → network Ollama → demo.\n"
-                f"Ollama URL: {url}\n"
-                "On phone, set OLLAMA_URL to your PC LAN IP "
-                "(e.g. http://192.168.1.10:11434).\n"
+                f"Ollama URL: {snap.get('ollama_url')}\n"
+                f"Model: {snap.get('ollama_model')}\n"
+                "Use Settings to set your PC LAN IP "
+                "(e.g. 192.168.1.10 or http://192.168.1.10:11434).\n"
+                "PC tip: set OLLAMA_HOST=0.0.0.0 before starting Ollama.\n"
             )
+
+        def on_mode_changed(self, mode: str):
+            self.status_label.text = f"Status: {mode}"
+
+    class SettingsScreen(Screen):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            root = BoxLayout(orientation="vertical", padding=12, spacing=8)
+
+            root.add_widget(
+                Label(
+                    text="Ollama / LAN Settings",
+                    size_hint_y=0.08,
+                    font_size="20sp",
+                    bold=True,
+                )
+            )
+            root.add_widget(
+                Label(
+                    text=(
+                        "Point at your desktop Ollama over Wi‑Fi.\n"
+                        "Example: 192.168.1.10  or  http://192.168.1.10:11434"
+                    ),
+                    size_hint_y=0.12,
+                    font_size="13sp",
+                )
+            )
+
+            root.add_widget(Label(text="Ollama URL / host", size_hint_y=0.05))
+            self.url_input = TextInput(
+                multiline=False,
+                size_hint_y=0.08,
+                hint_text="192.168.x.x:11434",
+            )
+            root.add_widget(self.url_input)
+
+            root.add_widget(Label(text="Model", size_hint_y=0.05))
+            self.model_input = TextInput(
+                multiline=False,
+                size_hint_y=0.08,
+                hint_text="llama3.2:3b",
+            )
+            root.add_widget(self.model_input)
+
+            self.result_label = Label(
+                text="",
+                size_hint_y=0.28,
+                font_size="13sp",
+                markup=True,
+            )
+            root.add_widget(self.result_label)
+
+            row = BoxLayout(size_hint_y=0.1, spacing=6)
+            row.add_widget(Button(text="Test", on_press=self.test_connection))
+            row.add_widget(Button(text="Save", on_press=self.save_settings))
+            row.add_widget(Button(text="Back", on_press=self.go_back))
+            root.add_widget(row)
+
+            self.add_widget(root)
+
+        def load_from_backend(self, backend: AIBackend) -> None:
+            snap = backend.settings_snapshot()
+            self.url_input.text = snap.get("ollama_url", "")
+            self.model_input.text = snap.get("ollama_model", "")
+            self.result_label.text = f"Current mode: {snap.get('mode')}"
+
+        def test_connection(self, instance):
+            app = App.get_running_app()
+            url = normalize_ollama_url(self.url_input.text)
+            model = self.model_input.text.strip() or _DEFAULT_OLLAMA_MODEL
+            client = OllamaClient(url, model)
+            self.result_label.text = "Testing…"
+            probe = client.probe()
+            if probe.get("ok"):
+                models = ", ".join((probe.get("models") or [])[:6]) or "(none listed)"
+                self.result_label.text = (
+                    f"[color=00ff00]OK[/color] {probe.get('latency_ms')} ms\n"
+                    f"URL: {probe.get('url')}\n"
+                    f"Models: {models}\n"
+                    "(Tap Save to keep these settings.)"
+                )
+                # Session-only apply so chat works immediately
+                if app.backend._ollama is None:
+                    app.backend._ollama = client
+                else:
+                    app.backend._ollama.configure(url, model)
+                if app.backend.mode != "full":
+                    app.backend._mode = "ollama"
+                main = self.manager.get_screen("main")
+                main.on_mode_changed(app.backend.mode.title())
+            else:
+                hint = probe.get("hint") or ""
+                self.result_label.text = (
+                    f"[color=ff6666]Failed[/color]\n"
+                    f"{probe.get('error')}\n{hint}"
+                )
+
+        def save_settings(self, instance):
+            app = App.get_running_app()
+            url = self.url_input.text
+            model = self.model_input.text
+            try:
+                probe = app.backend.apply_ollama_settings(url, model)
+            except OSError as exc:
+                self.result_label.text = f"[color=ff6666]Save failed:[/color] {exc}"
+                return
+            if probe.get("ok"):
+                self.result_label.text = (
+                    f"[color=00ff00]Saved + connected[/color]\n"
+                    f"{probe.get('saved_to')}\n"
+                    f"Mode: {app.backend.mode}"
+                )
+            else:
+                self.result_label.text = (
+                    f"[color=ffaa00]Saved, but not reachable yet[/color]\n"
+                    f"{probe.get('error')}\n"
+                    f"{probe.get('hint') or ''}"
+                )
+            main = self.manager.get_screen("main")
+            main.on_mode_changed(app.backend.mode.title())
+
+        def go_back(self, instance):
+            self.manager.current = "main"
 
     class UniversalSoulAIApp(App):
         def __init__(self, **kwargs):
@@ -276,11 +589,14 @@ def main():
             self.backend = AIBackend()
 
         def build(self):
+            self.backend.set_user_data_dir(self.user_data_dir)
             sm = ScreenManager()
             sm.add_widget(MainScreen(name="main"))
+            sm.add_widget(SettingsScreen(name="settings"))
             return sm
 
         def on_start(self):
+            self.backend.set_user_data_dir(self.user_data_dir)
             self.backend.start()
             screen = self.root.get_screen("main")
             if self.backend.mode == "full":
@@ -289,13 +605,16 @@ def main():
                 )
                 screen.status_label.text = "Status: AI ready"
             elif self.backend.mode == "ollama":
+                snap = self.backend.settings_snapshot()
                 screen.chat_display.text += (
                     "[color=00aaff]Network Ollama ready.[/color]\n"
+                    f"URL: {snap.get('ollama_url')} | "
+                    f"model: {snap.get('ollama_model')}\n"
                 )
                 screen.status_label.text = "Status: Ollama"
             else:
                 screen.chat_display.text += (
-                    "[color=ffaa00]Demo mode — set OLLAMA_URL if needed.[/color]\n"
+                    "[color=ffaa00]Demo mode — open Settings to set LAN Ollama.[/color]\n"
                 )
                 screen.status_label.text = "Status: Demo mode"
 

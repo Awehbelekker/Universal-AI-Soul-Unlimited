@@ -84,3 +84,6 @@ data/voice_samples/
 data/automation_sandbox/
 data/automation_audit.jsonl
 
+# Android / thin-client local settings
+data/android_settings.json
+
