@@ -25,6 +25,7 @@
 - Persisted values / personality in `data/user_profiles/` + CLI `onboard` / `values`
 - Desktop voice: **Edge neural TTS** default; **XTTS cloning** via `voice clone <wav>` after `python scripts/setup_voice_clone.py`
 - Offline STT: **faster-whisper** preferred for `listen` / mic; Google recognition only as fallback
+- CoAct real slice: `automate list|open|note` under `data/` sandbox with consent prompt + `data/automation_audit.jsonl`
 - `python smoke_test_ollama.py` / `python scripts/setup_ollama.py`
 - Benchmark suite under `benchmarks/`
 - GitHub Actions APK + benchmark workflows
@@ -37,7 +38,7 @@
 - Bundled PaddleOCR (runtime optional import in `core/automation/ocr_engine.py`)
 - Full personality/values assessment services (CLI/onboarding covers basics)
 - First XTTS model download (~2GB) on first clone — may take a while; CPML non-commercial terms apply
-- Real CoAct OS execution (still simulated)
+- Broad CoAct / TerminalBench still largely simulated beyond list/open/note sandbox actions
 - AES-256 encryption (config flag only)
 
 Full Done / Partial / Missing map: [VISION.md](VISION.md#status-map-july-2026).
@@ -48,6 +49,6 @@ Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational
 
 ## Next milestones
 
-1. One real CoAct automation path (consent + audit)
-2. Android thin client reliability (network Ollama)
+1. Android thin client reliability (network Ollama)
+2. Expand CoAct allowlist carefully (more real actions)
 3. Optional: ThinkMesh depth, on-device models, overlay / OCR / sync

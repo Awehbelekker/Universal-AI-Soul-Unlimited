@@ -638,41 +638,67 @@ class UniversalSoulAI:
     async def _check_automation_needs(self, user_input: str, ai_response: str,
                                     user_context: UserContext) -> Optional[Dict[str, Any]]:
         """Check if automation is needed for the request"""
-        # Simple automation trigger detection
-        automation_keywords = [
-            "automate", "schedule", "remind", "execute", "perform",
-            "run", "launch", "start", "complete", "finish"
-        ]
-        
-        if any(keyword in user_input.lower() for keyword in automation_keywords):
-            from core.interfaces.data_structures import AutomationTask
-            
-            task = AutomationTask(
-                description=user_input,
-                task_type="user_request",
-                platform="universal_soul_ai"
-            )
-            
-            try:
-                result = await self.coact_engine.execute_task(task, {
-                    "user_context": user_context.to_dict() if hasattr(user_context, 'to_dict') else {},
-                    "ai_response": ai_response
-                })
-                return result
-            except Exception as e:
-                logger.error(f"Automation execution failed: {e}")
-                return None
-        
-        return None
-    
-    async def _integrate_automation_result(self, ai_response: str, 
+        from core.automation.real_actions import (
+            consent_from_text,
+            parse_action,
+        )
+        from core.interfaces.data_structures import AutomationTask
+
+        # Real allowlisted actions (list/open/note) when wording matches
+        parsed = parse_action(user_input)
+        automation_keywords = (
+            "automate", "schedule", "remind me to", "execute task",
+            "perform automation",
+        )
+        keyword_hit = any(k in user_input.lower() for k in automation_keywords)
+
+        if parsed is None and not keyword_hit:
+            return None
+
+        description = user_input
+        if parsed is None:
+            # Legacy keyword path still hits simulated CoAct strategies
+            description = user_input
+
+        task = AutomationTask(
+            description=description,
+            task_type="user_request",
+            platform="universal_soul_ai",
+        )
+
+        try:
+            result = await self.coact_engine.execute_task(task, {
+                "user_context": user_context.to_dict()
+                if hasattr(user_context, "to_dict") else {},
+                "ai_response": ai_response,
+                "consent": consent_from_text(user_input),
+            })
+            return result
+        except Exception as e:
+            logger.error("Automation execution failed: %s", e)
+            return None
+
+    async def _integrate_automation_result(self, ai_response: str,
                                          automation_result: Dict[str, Any]) -> str:
         """Integrate automation results with AI response"""
+        if automation_result.get("real"):
+            action = automation_result.get("action", "action")
+            if automation_result.get("success"):
+                detail = automation_result.get("detail") or {}
+                return (
+                    f"{ai_response}\n\n"
+                    f"[CoAct real:{action}] OK — {detail}"
+                )
+            err = automation_result.get("error_message", "Unknown error")
+            return f"{ai_response}\n\n[CoAct real:{action}] blocked/failed — {err}"
+
         if automation_result.get("success"):
-            return f"{ai_response}\n\nAutomation completed successfully!"
-        else:
-            error_msg = automation_result.get("error_message", "Unknown error")
-            return f"{ai_response}\n\nAutomation encountered an issue: {error_msg}"
+            return (
+                f"{ai_response}\n\n"
+                "Automation reported success (simulated strategy path)."
+            )
+        error_msg = automation_result.get("error_message", "Unknown error")
+        return f"{ai_response}\n\nAutomation encountered an issue: {error_msg}"
     
     async def _apply_personality_and_values(self, response: str,
                                           user_context: UserContext) -> str:
@@ -850,6 +876,7 @@ async def main():
         print("Voice: 'voice', 'listen', 'voice status', 'voice set <name>'")
         print("Clone: 'voice clone <wav|record|demo>', 'voice clone clear'")
         print("  (Clone = any speaker from audio sample; not personality names)")
+        print("CoAct: 'automate list|open|note|audit|help' (real OS actions)")
         print("-" * 50)
 
         user_id = "default"
@@ -1004,6 +1031,60 @@ async def main():
                     print(f"\nEdge voice set to: {name}")
                     print("Examples: en-US-JennyNeural, en-US-GuyNeural, en-GB-SoniaNeural")
                     continue
+                elif user_input.lower() == "automate" or user_input.lower().startswith(
+                    "automate "
+                ):
+                    from core.automation.real_actions import (
+                        format_action_help,
+                        read_audit,
+                    )
+                    from core.interfaces.data_structures import AutomationTask
+
+                    rest = user_input[8:].strip()
+                    if not rest or rest.lower() in ("help", "?"):
+                        print(f"\n{format_action_help()}")
+                        continue
+                    if rest.lower().startswith("audit"):
+                        parts = rest.split(None, 1)
+                        n = 10
+                        if len(parts) > 1 and parts[1].strip().isdigit():
+                            n = int(parts[1].strip())
+                        entries = read_audit(n)
+                        if not entries:
+                            print("\nNo audit entries yet.")
+                        else:
+                            print(f"\nLast {len(entries)} CoAct audit entries:")
+                            for e in entries:
+                                print(
+                                    f"- {e.get('action')} success={e.get('success')} "
+                                    f"consent={e.get('consent')} "
+                                    f"{e.get('detail') or e.get('error_message')}"
+                                )
+                        continue
+
+                    print(f"\nProposed real action: {rest}")
+                    confirm = input(
+                        "Consent to run this on your machine? [y/N]: "
+                    ).strip().lower()
+                    consent = confirm in ("y", "yes")
+                    if not consent:
+                        print("Cancelled — no action taken.")
+                    task = AutomationTask(
+                        description=rest,
+                        task_type="cli_automate",
+                        platform="universal_soul_ai",
+                    )
+                    result = await soul_ai.coact_engine.execute_task(
+                        task, {"consent": consent, "source": "cli"}
+                    )
+                    if result.get("success"):
+                        print(f"OK [{result.get('action')}]: {result.get('detail')}")
+                    else:
+                        print(
+                            f"Failed/blocked [{result.get('action')}]: "
+                            f"{result.get('error_message')}"
+                        )
+                    continue
                 elif user_input.lower() == "listen":
                     if not soul_ai.desktop_voice or not soul_ai.desktop_voice.status()["mic_available"]:
                         print("\nMicrophone not available. Install: pip install SpeechRecognition pyaudio")
@@ -1018,6 +1099,7 @@ async def main():
                         continue
                     print(f"You (voice): {heard}")
                     user_input = heard
+                    # fall through to chat with transcribed text
                 elif not user_input:
                     continue
                 

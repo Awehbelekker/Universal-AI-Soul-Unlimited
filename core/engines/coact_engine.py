@@ -195,6 +195,49 @@ class CoAct1AutomationEngine(IAutomationEngine):
         self.total_tasks += 1
 
         try:
+            # Prefer real allowlisted OS actions when the request matches
+            try:
+                from core.automation.real_actions import (
+                    consent_from_text,
+                    execute_real_action,
+                    parse_action,
+                )
+
+                parsed = parse_action(task.description)
+                if parsed is not None:
+                    consent = bool(
+                        context.get("consent")
+                        or consent_from_text(task.description)
+                        or consent_from_text(str(context.get("ai_response", "")))
+                    )
+                    real = execute_real_action(
+                        parsed,
+                        consent=consent,
+                        source="coact_engine",
+                        description=task.description,
+                    )
+                    execution_time = time.time() - start_time
+                    success = bool(real.get("success"))
+                    self._update_metrics(
+                        success, ExecutionStrategy.SEQUENTIAL, execution_time
+                    )
+                    return {
+                        "task_id": task.task_id,
+                        "success": success,
+                        "real": True,
+                        "execution_time": real.get("execution_time", execution_time),
+                        "strategy_used": ExecutionStrategy.SEQUENTIAL.value,
+                        "steps_completed": real.get("steps_completed", 1 if success else 0),
+                        "total_steps": real.get("total_steps", 1),
+                        "confidence": real.get("confidence", 1.0 if success else 0.0),
+                        "error_message": real.get("error_message"),
+                        "intermediate_results": real.get("intermediate_results", []),
+                        "action": real.get("action"),
+                        "detail": real.get("detail"),
+                    }
+            except Exception as e:
+                logger.warning("Real action path error (falling back): %s", e)
+
             # Analyze task complexity
             complexity_analysis = await self.analyze_task_complexity(
                 task.description

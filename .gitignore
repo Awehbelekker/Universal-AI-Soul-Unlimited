@@ -80,3 +80,7 @@ benchmark_results/
 # Local voice clone samples
 data/voice_samples/
 
+# CoAct real-action sandbox + audit log
+data/automation_sandbox/
+data/automation_audit.jsonl
+

@@ -121,9 +121,9 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 ### Automation
 | Capability | Status | Notes |
 |------------|--------|-------|
-| CoAct routing / engine shell | **Partial** | Exists; success often simulated |
+| CoAct routing / engine shell | **Partial** | Exists; unmatched tasks still simulated |
+| Real OS / file automation | **Partial** | Allowlisted `list`/`open`/`note` + consent + audit |
 | TerminalBench coding agents | **Partial** | Integration claimed; not proven end-to-end |
-| Real OS / file automation | **Missing** | Still simulated |
 
 ### Platforms
 | Capability | Status | Notes |
@@ -149,7 +149,7 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 
 1. ~~**Desktop companion polish**~~ — Edge/XTTS + `voice clone` path proven  
 2. ~~**Offline STT**~~ — Whisper local for mic (`faster-whisper`; Google fallback)  
-3. **Real CoAct slice** — one real automation path with consent + audit  
+3. ~~**Real CoAct slice**~~ — allowlisted list/open/note with consent + audit  
 4. **Android thin client** — reliable LAN/cloud-to-desktop Ollama; settings screen  
 5. **ThinkMesh depth** — make orchestration earn its place vs single HRM path  
 6. **On-device LIGHT/STANDARD** — only after thin client is solid  
