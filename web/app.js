@@ -102,7 +102,10 @@ async function chat(message) {
   const payload = {
     model: state.settings.ollamaModel,
     prompt:
-      "You are Universal Soul AI. Reply directly and helpfully.\n\n" +
+      "You are Universal Soul AI — a local-first personal companion for this user. " +
+      "Universal Soul runs privately on their desktop/phone: chat via Ollama, optional voice, " +
+      "memory/values, and careful automation. Prefer concise, helpful answers. " +
+      "If asked what you are, explain that briefly without inventing unshipped features.\n\n" +
       `User: ${message}\n\nAssistant:`,
     stream: false,
     options: { num_predict: 256, temperature: 0.7 },
