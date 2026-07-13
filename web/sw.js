@@ -1,5 +1,5 @@
 /* Minimal offline shell for installable PWA */
-const CACHE = "usa-pwa-v1";
+const CACHE = "usa-pwa-v2";
 const ASSETS = [
   "./",
   "./index.html",

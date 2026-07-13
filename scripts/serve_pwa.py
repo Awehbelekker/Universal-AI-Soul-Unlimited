@@ -115,6 +115,32 @@ class PWAHandler(SimpleHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
+def _lan_ips() -> list[str]:
+    ips: list[str] = []
+    try:
+        import socket
+
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+    try:
+        import socket
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127.") and ip not in ips:
+            ips.insert(0, ip)
+    except Exception:
+        pass
+    return ips
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Serve Soul AI PWA + Ollama proxy")
     parser.add_argument("--host", default="0.0.0.0")
@@ -127,8 +153,14 @@ def main() -> int:
 
     httpd = ThreadingHTTPServer((args.host, args.port), PWAHandler)
     print(f"PWA:   http://127.0.0.1:{args.port}/")
-    print(f"LAN:   http://<your-pc-ip>:{args.port}/")
+    lans = _lan_ips()
+    if lans:
+        for ip in lans:
+            print(f"Phone: http://{ip}:{args.port}/")
+    else:
+        print(f"LAN:   http://<your-pc-ip>:{args.port}/")
     print(f"Proxy: /proxy/* -> Ollama (header X-Ollama-URL or {DEFAULT_OLLAMA})")
+    print("Phone checklist: same Wi-Fi -> open Phone URL -> Settings Test -> Add to Home Screen")
     print("Ctrl+C to stop.")
     try:
         httpd.serve_forever()

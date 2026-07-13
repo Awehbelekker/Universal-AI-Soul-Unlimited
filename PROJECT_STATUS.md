@@ -52,6 +52,6 @@ Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational
 
 ## Next milestones
 
-1. Install PWA on a phone (Add to Home Screen) and confirm LAN chat
+1. **You:** phone PWA proof — `scripts/ready_pwa_lan.ps1` then open the printed Phone URL → Test → Add to Home Screen
 2. Optional: APK build if native Android still desired
 3. Optional: on-device models, overlay / OCR / sync / crypto
