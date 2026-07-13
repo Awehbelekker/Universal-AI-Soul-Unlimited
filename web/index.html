@@ -48,9 +48,15 @@
         Model
         <input id="ollamaModel" name="ollamaModel" placeholder="llama3.2:3b" />
       </label>
+      <label class="check">
+        <input id="speakReplies" name="speakReplies" type="checkbox" />
+        Speak replies (PC voice — Edge or your clone)
+      </label>
+      <p id="voiceLine" class="hint"></p>
       <p id="settingsStatus" class="status" role="status"></p>
       <div class="row">
         <button type="button" id="testBtn" class="ghost">Test</button>
+        <button type="button" id="testVoiceBtn" class="ghost">Test voice</button>
         <button type="submit" id="saveBtn" value="save">Save</button>
         <button type="submit" class="ghost" value="cancel">Close</button>
       </div>

@@ -191,6 +191,17 @@ label {
   color: var(--muted);
 }
 
+label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--ink);
+}
+
+label.check input {
+  width: auto;
+}
+
 label input {
   border-radius: 10px;
 }

@@ -165,7 +165,9 @@ def _ensure_ctranslate2_cuda_dlls() -> None:
 class DesktopVoiceService:
     """Speak replies (clone / neural / SAPI) and capture mic input."""
 
-    def __init__(self, whisper_model: str = "tiny") -> None:
+    def __init__(
+        self, whisper_model: str = "tiny", *, light: bool = False
+    ) -> None:
         self._engine = None
         self._recognizer = None
         self._coqui = None
@@ -174,9 +176,17 @@ class DesktopVoiceService:
         self.whisper_model_name = whisper_model
         self._edge_available = _probe_edge_tts()
         self._pyttsx3_available = _probe_pyttsx3()
-        self._coqui_available = _probe_coqui()
-        self._faster_whisper_available = _probe_faster_whisper()
-        self._openai_whisper_available = _probe_openai_whisper()
+        if light:
+            # Fast path for PWA TTS API — skip heavy Coqui/Whisper/mic probes
+            self._coqui_available = False
+            self._faster_whisper_available = False
+            self._openai_whisper_available = False
+            self._stt_available = False
+        else:
+            self._coqui_available = _probe_coqui()
+            self._faster_whisper_available = _probe_faster_whisper()
+            self._openai_whisper_available = _probe_openai_whisper()
+            self._stt_available = _probe_speech_recognition()
         self._whisper_available = (
             self._faster_whisper_available or self._openai_whisper_available
         )
@@ -185,8 +195,8 @@ class DesktopVoiceService:
             or self._pyttsx3_available
             or self._coqui_available
         )
-        self._stt_available = _probe_speech_recognition()
-        self._mic_available = self._stt_available and _probe_microphone()
+        # Defer mic probe — can hang for tens of seconds on some Windows setups
+        self._mic_available = False
         self.speak_replies: bool = False
         self.tts_engine: str = "edge" if self._edge_available else "pyttsx3"
         self.stt_engine: str = (
@@ -197,7 +207,7 @@ class DesktopVoiceService:
         self.clone_wav: Optional[str] = None
         self.clone_language: str = "en"
 
-    async def initialize(self) -> bool:
+    async def initialize(self, *, tts_only: bool = False) -> bool:
         if self.initialized:
             return True
 
@@ -217,7 +227,7 @@ class DesktopVoiceService:
                 logger.warning("pyttsx3 init failed: %s", e)
                 self._pyttsx3_available = False
 
-        if self._stt_available:
+        if not tts_only and self._stt_available:
             try:
                 import speech_recognition as sr
 
@@ -438,6 +448,93 @@ class DesktopVoiceService:
             return await self._speak_pyttsx3(spoken, personality)
 
         return False
+
+    async def synthesize(
+        self, text: str, personality: str = "friendly"
+    ) -> Optional[tuple[bytes, str]]:
+        """Render TTS to bytes without playing (for PWA / API).
+
+        Returns (audio_bytes, mime_type) or None.
+        Prefers XTTS clone when configured, else Edge MP3.
+        """
+        if not text or not text.strip():
+            return None
+        if not self.initialized:
+            await self.initialize(tts_only=True)
+
+        spoken = text.strip()
+        if len(spoken) > 1200:
+            spoken = spoken[:1197] + "..."
+
+        if self.clone_wav and self._coqui_available:
+            data = await self._synth_clone_bytes(spoken)
+            if data:
+                return data, "audio/wav"
+
+        if self._edge_available:
+            data = await self._synth_edge_bytes(spoken, personality)
+            if data:
+                return data, "audio/mpeg"
+
+        return None
+
+    async def _synth_clone_bytes(self, text: str) -> Optional[bytes]:
+        if not await self._ensure_coqui_xtts():
+            return None
+        assert self.clone_wav
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        out = Path(tmp)
+        try:
+            audio = await self._coqui.clone_speak(
+                text=text,
+                speaker_wav=self.clone_wav,
+                output_path=out,
+                language=self.clone_language,
+            )
+            if not audio and not out.is_file():
+                return None
+            return out.read_bytes()
+        except Exception as e:
+            logger.warning("XTTS synth failed: %s", e)
+            return None
+        finally:
+            try:
+                out.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    async def _synth_edge_bytes(
+        self, text: str, personality: str
+    ) -> Optional[bytes]:
+        import edge_tts
+
+        voice = self.voice_id or _EDGE_VOICES.get(
+            personality, _EDGE_VOICES["friendly"]
+        )
+        rate = {
+            "energetic": "+15%",
+            "calm": "-10%",
+            "professional": "+0%",
+            "friendly": "+5%",
+            "creative": "+8%",
+            "analytical": "-5%",
+        }.get(personality, "+0%")
+
+        fd, path = tempfile.mkstemp(suffix=".mp3")
+        os.close(fd)
+        try:
+            communicate = edge_tts.Communicate(text, voice, rate=rate)
+            await communicate.save(path)
+            return Path(path).read_bytes()
+        except Exception as e:
+            logger.warning("Edge TTS synth failed: %s", e)
+            return None
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     async def _speak_clone(self, text: str) -> bool:
         if not await self._ensure_coqui_xtts():

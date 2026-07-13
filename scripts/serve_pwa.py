@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
 """
-Serve the Universal Soul PWA and proxy Ollama (avoids browser CORS issues).
+Serve the Universal Soul PWA, proxy Ollama, and synthesize voice on the PC.
 
 Usage:
   python scripts/serve_pwa.py
   python scripts/serve_pwa.py --host 0.0.0.0 --port 8765
 
-Then open http://127.0.0.1:8765 on this PC, or http://<LAN-IP>:8765 on your phone.
-On the PC, bind Ollama to LAN if needed: set OLLAMA_HOST=0.0.0.0
+Phone opens http://<LAN-IP>:8765 — chat + optional Speak replies (Edge / clone).
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
-import urllib.error
+import threading
 import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 WEB = ROOT / "web"
 DEFAULT_OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+
+_voice_service = None
+_voice_init_lock = threading.Lock()
 
 
 def normalize_ollama_url(url: str) -> str:
@@ -39,6 +45,99 @@ def normalize_ollama_url(url: str) -> str:
     return f"{scheme}://{host}:{port}"
 
 
+def _load_clone_from_profile() -> Optional[str]:
+    profiles = ROOT / "data" / "user_profiles"
+    if not profiles.is_dir():
+        return None
+    # Prefer default.json / default_* then any profile with clone_wav
+    candidates = sorted(profiles.glob("*.json"))
+    preferred = [p for p in candidates if "default" in p.stem.lower()] + [
+        p for p in candidates if "default" not in p.stem.lower()
+    ]
+    for path in preferred:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            prefs = data.get("preferences") or data
+            wav = prefs.get("clone_wav")
+            if wav and Path(wav).is_file():
+                return str(wav)
+        except Exception:
+            continue
+    return None
+
+
+def get_voice_service():
+    global _voice_service
+    with _voice_init_lock:
+        if _voice_service is not None:
+            return _voice_service
+        from core.voice_pipeline.desktop_voice import DesktopVoiceService
+
+        svc = DesktopVoiceService(light=True)
+        clone = os.environ.get("SOUL_CLONE_WAV") or _load_clone_from_profile()
+        if clone:
+            try:
+                # Enable Coqui only when a clone sample is configured
+                from core.voice_pipeline.desktop_voice import _probe_coqui
+
+                svc._coqui_available = _probe_coqui()
+                svc._tts_available = (
+                    svc._edge_available
+                    or svc._pyttsx3_available
+                    or svc._coqui_available
+                )
+                svc.set_clone_wav(clone)
+            except Exception:
+                pass
+        _voice_service = svc
+        return _voice_service
+
+
+def synthesize_sync(
+    text: str, personality: str = "friendly"
+) -> Tuple[Optional[bytes], Optional[str], Dict[str, Any]]:
+    """Run DesktopVoiceService.synthesize on a fresh event loop."""
+
+    async def _run():
+        svc = get_voice_service()
+        await svc.initialize(tts_only=True)
+        result = await svc.synthesize(text, personality=personality)
+        st = svc.status()
+        meta = {
+            "engine": "clone" if st.get("cloning") else st.get("tts_engine"),
+            "cloning": bool(st.get("cloning")),
+            "clone_wav": st.get("clone_wav"),
+            "voice_id": st.get("voice_id"),
+        }
+        if result is None:
+            return None, None, meta
+        data, mime = result
+        return data, mime, meta
+
+    return asyncio.run(_run())
+
+
+def voice_status_sync() -> Dict[str, Any]:
+    async def _run():
+        svc = get_voice_service()
+        await svc.initialize(tts_only=True)
+        st = svc.status()
+        return {
+            "ok": True,
+            "tts_engine": st.get("tts_engine"),
+            "cloning": bool(st.get("cloning")),
+            "clone_wav": st.get("clone_wav"),
+            "edge_available": st.get("edge_available"),
+            "coqui_available": st.get("coqui_available"),
+            "voice_id": st.get("voice_id"),
+        }
+
+    try:
+        return asyncio.run(_run())
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 class PWAHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB), **kwargs)
@@ -47,15 +146,18 @@ class PWAHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
+    def _cors(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, X-Ollama-URL",
+        )
+
     def do_OPTIONS(self):
-        if self.path.startswith("/proxy/"):
+        if self.path.startswith("/proxy/") or self.path.startswith("/api/"):
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header(
-                "Access-Control-Allow-Headers",
-                "Content-Type, X-Ollama-URL",
-            )
+            self._cors()
             self.end_headers()
             return
         self.send_error(404)
@@ -63,18 +165,71 @@ class PWAHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/proxy/"):
             return self._proxy("GET")
+        if self.path.split("?", 1)[0] == "/api/voice-status":
+            return self._voice_status()
         return super().do_GET()
 
     def do_POST(self):
         if self.path.startswith("/proxy/"):
             return self._proxy("POST")
+        if self.path.split("?", 1)[0] == "/api/speak":
+            return self._speak()
         self.send_error(405)
+
+    def _json(self, code: int, payload: Dict[str, Any]) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self._cors()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _voice_status(self) -> None:
+        self._json(200, voice_status_sync())
+
+    def _speak(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except Exception:
+            return self._json(400, {"error": "invalid JSON"})
+
+        text = (body.get("text") or "").strip()
+        personality = (body.get("personality") or "friendly").strip() or "friendly"
+        if not text:
+            return self._json(400, {"error": "text required"})
+
+        try:
+            audio, mime, meta = synthesize_sync(text, personality)
+        except Exception as exc:
+            return self._json(500, {"error": str(exc)})
+
+        if not audio or not mime:
+            return self._json(
+                503,
+                {
+                    "error": "TTS unavailable (install edge-tts on the PC)",
+                    "meta": meta,
+                },
+            )
+
+        self.send_response(200)
+        self._cors()
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(audio)))
+        self.send_header("X-Soul-TTS-Engine", str(meta.get("engine") or ""))
+        self.send_header(
+            "X-Soul-TTS-Cloning", "1" if meta.get("cloning") else "0"
+        )
+        self.end_headers()
+        self.wfile.write(audio)
 
     def _proxy(self, method: str) -> None:
         target_base = normalize_ollama_url(
             self.headers.get("X-Ollama-URL") or DEFAULT_OLLAMA
         )
-        # /proxy/api/tags -> /api/tags
         suffix = self.path[len("/proxy") :]
         if not suffix.startswith("/"):
             suffix = "/" + suffix
@@ -88,7 +243,9 @@ class PWAHandler(SimpleHTTPRequestHandler):
             data=body,
             method=method,
             headers={
-                "Content-Type": self.headers.get("Content-Type", "application/json"),
+                "Content-Type": self.headers.get(
+                    "Content-Type", "application/json"
+                ),
                 "User-Agent": "UniversalSoulAI-PWA-Proxy",
             },
         )
@@ -96,7 +253,7 @@ class PWAHandler(SimpleHTTPRequestHandler):
             with urllib.request.urlopen(req, timeout=120) as resp:
                 data = resp.read()
                 self.send_response(resp.status)
-                self.send_header("Access-Control-Allow-Origin", "*")
+                self._cors()
                 ctype = resp.headers.get("Content-Type", "application/json")
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(data)))
@@ -105,7 +262,7 @@ class PWAHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             payload = json.dumps({"error": str(exc), "url": url}).encode("utf-8")
             self.send_response(502)
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self._cors()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -160,7 +317,7 @@ def main() -> int:
     else:
         print(f"LAN:   http://<your-pc-ip>:{args.port}/")
     print(f"Proxy: /proxy/* -> Ollama (header X-Ollama-URL or {DEFAULT_OLLAMA})")
-    print("Phone checklist: same Wi-Fi -> open Phone URL -> Settings Test -> Add to Home Screen")
+    print("Voice: POST /api/speak  GET /api/voice-status (Edge / XTTS on this PC)")
     print("Ctrl+C to stop.")
     try:
         httpd.serve_forever()

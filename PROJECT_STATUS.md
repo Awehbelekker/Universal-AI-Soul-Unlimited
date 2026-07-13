@@ -27,7 +27,7 @@
 - Offline STT: **faster-whisper** preferred for `listen` / mic; Google recognition only as fallback
 - CoAct real slice: `automate list|read|open|note|append|mkdir|copy|delete|info` (sandbox, consent + audit)
 - Android thin client: Settings screen for Ollama URL/model, persist + Test connection (`app_main.py`)
-- **PWA thin client**: `web/` + `python scripts/serve_pwa.py` — **phone LAN proven** (Add to Home Screen / browser)
+- **PWA thin client**: `web/` + `python scripts/serve_pwa.py` — **phone LAN proven**; **Speak replies** via PC Edge/XTTS (`/api/speak`)
 - ThinkMesh multipass: planner → critic → synthesizer on deep routes; CLI `think <question>`
 - `python smoke_test_ollama.py` / `python scripts/setup_ollama.py`
 - Benchmark suite under `benchmarks/`

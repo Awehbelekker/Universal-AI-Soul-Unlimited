@@ -115,8 +115,10 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 | Edge neural TTS (desktop) | **Done** | Default good voice |
 | Coqui / XTTS install on Windows | **Done** | `coqui-tts` via `scripts/setup_voice_clone.py` |
 | Voice clone from WAV | **Partial** | CLI: `voice clone <file|record|demo>`; needs sample + first model download |
+| **PWA thin client** | **Done** | Phone LAN + Settings; Speak replies via PC TTS |
 | Offline Whisper STT | **Done** | `faster-whisper` preferred; Google fallback |
 | ElevenLabs / Deepgram | **Partial** | Hooks / privacy gates; not primary |
+| **Mobile / PWA voice** | **Partial** | Phone plays PC Edge or XTTS clone over LAN |
 
 ### Automation
 | Capability | Status | Notes |

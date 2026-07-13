@@ -48,12 +48,10 @@ def test_proxy_live() -> None:
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        # static
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
             html = r.read().decode("utf-8", errors="replace")
             assert "Universal Soul" in html
 
-        # proxy tags
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/proxy/api/tags",
             headers={"X-Ollama-URL": DEFAULT_OLLAMA},
@@ -62,6 +60,28 @@ def test_proxy_live() -> None:
             data = json.loads(r.read().decode("utf-8"))
             assert "models" in data
         print("proxy live OK —", DEFAULT_OLLAMA)
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/voice-status", timeout=90
+        ) as r:
+            vs = json.loads(r.read().decode("utf-8"))
+            assert vs.get("ok") is True, vs
+            print("voice-status OK —", vs.get("tts_engine"), "clone=", vs.get("cloning"))
+
+        speak_req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/speak",
+            data=json.dumps(
+                {"text": "Hello from Universal Soul.", "personality": "friendly"}
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(speak_req, timeout=90) as r:
+            audio = r.read()
+            ctype = r.headers.get("Content-Type", "")
+            assert len(audio) > 100, len(audio)
+            assert "audio" in ctype, ctype
+            print("speak OK —", ctype, "bytes=", len(audio))
     finally:
         httpd.shutdown()
 
