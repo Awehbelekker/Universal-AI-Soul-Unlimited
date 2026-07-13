@@ -122,7 +122,7 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 | Capability | Status | Notes |
 |------------|--------|-------|
 | CoAct routing / engine shell | **Partial** | Exists; unmatched tasks still simulated |
-| Real OS / file automation | **Partial** | Allowlisted `list`/`open`/`note` + consent + audit |
+| Real OS / file automation | **Partial** | Sandbox allowlist: list/read/open/note/append/mkdir/copy/delete + consent + audit |
 | TerminalBench coding agents | **Partial** | Integration claimed; not proven end-to-end |
 
 ### Platforms
@@ -149,12 +149,12 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 
 1. ~~**Desktop companion polish**~~ — Edge/XTTS + `voice clone` path proven  
 2. ~~**Offline STT**~~ — Whisper local for mic (`faster-whisper`; Google fallback)  
-3. ~~**Real CoAct slice**~~ — allowlisted list/open/note with consent + audit  
+3. ~~**Real CoAct slice**~~ — sandbox allowlist + consent + audit (expand as needed)  
 4. ~~**Android thin client**~~ — Settings + persisted LAN Ollama client (APK device proof still open)  
 5. ~~**ThinkMesh depth**~~ — multipass planner/critic/synth on deep routes + `think` CLI  
 6. **On-device LIGHT/STANDARD** — only after thin client is solid  
 7. **Overlay / OCR / sync / crypto** — after core companion loop is trusted  
-8. **Expand CoAct allowlist** — more real actions as needed  
+8. **APK device proof** — Settings → LAN Ollama on hardware  
 
 ---
 

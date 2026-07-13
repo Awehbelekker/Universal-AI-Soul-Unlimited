@@ -40,7 +40,7 @@
 - Bundled PaddleOCR (runtime optional import in `core/automation/ocr_engine.py`)
 - Full personality/values assessment services (CLI/onboarding covers basics)
 - First XTTS model download (~2GB) on first clone — may take a while; CPML non-commercial terms apply
-- Broad CoAct / TerminalBench still largely simulated beyond list/open/note sandbox actions
+- Broad CoAct / TerminalBench still largely simulated beyond sandbox file actions
 - AES-256 encryption (config flag only)
 
 Full Done / Partial / Missing map: [VISION.md](VISION.md#status-map-july-2026).
@@ -51,6 +51,6 @@ Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational
 
 ## Next milestones
 
-1. Expand CoAct allowlist carefully (more real actions)
-2. APK build verification of Settings → LAN Ollama on a real device
-3. Optional: on-device models, overlay / OCR / sync / crypto
+1. APK build verification of Settings → LAN Ollama on a real device
+2. Optional: on-device models, overlay / OCR / sync / crypto
+3. Further CoAct only when a concrete workflow needs it

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -11,65 +12,78 @@ sys.path.insert(0, str(ROOT))
 
 from core.automation.real_actions import (  # noqa: E402
     AUDIT_LOG,
+    SANDBOX_DIR,
     execute_real_action,
     parse_action,
     read_audit,
 )
 from core.engines.coact_engine import CoAct1AutomationEngine  # noqa: E402
 from core.interfaces.data_structures import AutomationTask  # noqa: E402
-import asyncio
+
+
+def _run(desc: str, consent: bool = True):
+    parsed = parse_action(desc)
+    assert parsed is not None, f"parse failed: {desc}"
+    return execute_real_action(
+        parsed, consent=consent, source="smoke", description=desc
+    )
 
 
 def test_direct() -> None:
-    blocked = execute_real_action(
-        parse_action("note hello without consent"),
-        consent=False,
-        source="smoke",
-        description="note hello without consent",
-    )
+    blocked = _run("note hello without consent", consent=False)
     assert blocked["success"] is False, blocked
     assert "Consent" in (blocked.get("error_message") or "")
 
-    ok = execute_real_action(
-        parse_action("note CoAct smoke note"),
-        consent=True,
-        source="smoke",
-        description="note CoAct smoke note",
-    )
+    ok = _run("note CoAct smoke note")
     assert ok["success"] is True, ok
     path = Path(ok["detail"]["path"])
     assert path.is_file()
-    assert "CoAct smoke note" in path.read_text(encoding="utf-8")
 
-    listed = execute_real_action(
-        parse_action("list"),
-        consent=True,
-        source="smoke",
-        description="list",
-    )
+    listed = _run("list")
     assert listed["success"] is True, listed
     assert listed["detail"]["count"] >= 1
 
+    info = _run("info")
+    assert info["success"] is True, info
+    assert "sandbox" in info["detail"]
+
+    read = _run(f"read {path.name}")
+    assert read["success"] is True, read
+    assert "CoAct smoke note" in read["detail"]["text"]
+
+    mkdir = _run("mkdir smoke_dir")
+    assert mkdir["success"] is True, mkdir
+
+    append = _run(f"append {path.name} second line")
+    assert append["success"] is True, append
+    assert "second line" in path.read_text(encoding="utf-8")
+
+    copy = _run(f"copy {path.name} smoke_copy.txt")
+    assert copy["success"] is True, copy
+    assert (SANDBOX_DIR / "smoke_copy.txt").is_file()
+
     # Outside allowlist must fail
-    bad = execute_real_action(
-        parse_action("open C:/Windows"),
-        consent=True,
-        source="smoke",
-        description="open C:/Windows",
-    )
+    bad = _run("open C:/Windows")
     assert bad["success"] is False, bad
+
+    # Delete outside sandbox must fail
+    bad_del = _run("delete ../user_profiles")
+    assert bad_del["success"] is False, bad_del
+
+    deleted = _run("delete smoke_copy.txt")
+    assert deleted["success"] is True, deleted
+
+    empty = _run("delete smoke_dir")
+    assert empty["success"] is True, empty
 
     entries = read_audit(10)
     assert entries, "expected audit log entries"
     assert AUDIT_LOG.is_file()
-    print("direct OK — note/list/deny + audit")
+    print("direct OK — expanded allowlist + audit")
 
 
 async def test_engine() -> None:
     engine = CoAct1AutomationEngine()
-    # Skip full initialize (background loop); call execute which inits
-    # But initialize starts background forever — use execute_real via execute_task
-    # after minimal init of strategies only
     await engine._initialize_strategies()
     engine.is_initialized = True
 

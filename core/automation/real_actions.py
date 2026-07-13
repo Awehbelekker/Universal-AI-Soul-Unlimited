@@ -1,9 +1,9 @@
 """
 Real CoAct actions (allowlisted) with consent + audit.
 
-First real automation slice — not simulated sleep/hash success.
 Safe defaults: only paths under the project data sandbox (or explicitly
-allowlisted roots), and only after consent=True.
+allowlisted roots), and only after consent=True. Destructive ops are
+restricted to the sandbox directory.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 import uuid
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 SANDBOX_DIR = _REPO_ROOT / "data" / "automation_sandbox"
 AUDIT_LOG = _REPO_ROOT / "data" / "automation_audit.jsonl"
+_MAX_READ_BYTES = 64_000
 
 # Paths CoAct may touch without being a general shell.
 _ALLOWED_ROOTS = (
@@ -34,9 +36,10 @@ _ALLOWED_ROOTS = (
 
 @dataclass
 class ParsedAction:
-    action: str  # list_dir | open_path | write_note
+    action: str
     path: Optional[str] = None
     text: Optional[str] = None
+    dest: Optional[str] = None
 
 
 def ensure_sandbox() -> Path:
@@ -63,12 +66,27 @@ def _resolve_under_allowlist(raw: str) -> Path:
     )
 
 
+def _resolve_under_sandbox(raw: str) -> Path:
+    """Stricter: only under automation_sandbox (for mkdir/delete/write)."""
+    ensure_sandbox()
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = (SANDBOX_DIR / p).resolve()
+    else:
+        p = p.resolve()
+    p.relative_to(SANDBOX_DIR.resolve())
+    return p
+
+
 def parse_action(description: str) -> Optional[ParsedAction]:
     """Parse a natural-language or CLI-style automation request."""
     text = (description or "").strip()
     if not text:
         return None
     low = text.lower()
+
+    if low in ("info", "sandbox", "automate info", "automate sandbox"):
+        return ParsedAction("sandbox_info")
 
     m = re.match(
         r"^(?:automate\s+)?list(?:\s+dir(?:ectory)?)?(?:\s+(.+))?$",
@@ -80,12 +98,56 @@ def parse_action(description: str) -> Optional[ParsedAction]:
         return ParsedAction("list_dir", path=path_raw)
 
     m = re.match(
+        r"^(?:automate\s+)?(?:read|cat|show)\s+(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        return ParsedAction("read_file", path=m.group(1).strip())
+
+    m = re.match(
         r"^(?:automate\s+)?open(?:\s+(?:folder|path|file))?\s+(.+)$",
         text,
         re.IGNORECASE,
     )
     if m:
         return ParsedAction("open_path", path=m.group(1).strip())
+
+    m = re.match(
+        r"^(?:automate\s+)?mkdir\s+(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        return ParsedAction("mkdir", path=m.group(1).strip())
+
+    m = re.match(
+        r"^(?:automate\s+)?(?:delete|rm|remove)\s+(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        return ParsedAction("delete_file", path=m.group(1).strip())
+
+    m = re.match(
+        r"^(?:automate\s+)?copy\s+(\S+)\s+(\S+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        return ParsedAction(
+            "copy_file", path=m.group(1).strip(), dest=m.group(2).strip()
+        )
+
+    m = re.match(
+        r"^(?:automate\s+)?append(?:\s+to)?\s+(\S+)\s+(.+)$",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if m:
+        return ParsedAction(
+            "append_file", path=m.group(1).strip(), text=m.group(2).strip()
+        )
 
     m = re.match(
         r"^(?:automate\s+)?(?:write\s+)?note(?:\s+|:)\s*(.+)$",
@@ -142,6 +204,20 @@ def read_audit(limit: int = 20) -> List[Dict[str, Any]]:
     return out
 
 
+def _ok(action: str, detail: Dict[str, Any], started: float) -> Dict[str, Any]:
+    return {
+        "success": True,
+        "real": True,
+        "action": action,
+        "detail": detail,
+        "execution_time": time.time() - started,
+        "steps_completed": 1,
+        "total_steps": 1,
+        "confidence": 1.0,
+        "intermediate_results": [detail],
+    }
+
+
 def execute_real_action(
     action: ParsedAction,
     *,
@@ -155,6 +231,7 @@ def execute_real_action(
     payload: Dict[str, Any] = {
         "action": action.action,
         "path": action.path,
+        "dest": action.dest,
         "source": source,
         "description": description[:500],
         "consent": bool(consent),
@@ -175,7 +252,17 @@ def execute_real_action(
         return result
 
     try:
-        if action.action == "list_dir":
+        if action.action == "sandbox_info":
+            entries = sorted(p.name for p in SANDBOX_DIR.iterdir())
+            detail = {
+                "sandbox": str(SANDBOX_DIR),
+                "count": len(entries),
+                "entries": entries[:50],
+                "allowed_roots": [str(r) for r in _ALLOWED_ROOTS],
+            }
+            result = _ok("sandbox_info", detail, started)
+
+        elif action.action == "list_dir":
             target = _resolve_under_allowlist(action.path or ".")
             if not target.exists():
                 raise FileNotFoundError(f"Not found: {target}")
@@ -191,17 +278,26 @@ def execute_real_action(
                 "entries": entries,
                 "count": len(entries),
             }
-            result = {
-                "success": True,
-                "real": True,
-                "action": "list_dir",
-                "detail": detail,
-                "execution_time": time.time() - started,
-                "steps_completed": 1,
-                "total_steps": 1,
-                "confidence": 1.0,
-                "intermediate_results": [detail],
+            result = _ok("list_dir", detail, started)
+
+        elif action.action == "read_file":
+            target = _resolve_under_allowlist(action.path or "")
+            if not target.is_file():
+                raise FileNotFoundError(f"Not a file: {target}")
+            raw = target.read_bytes()
+            truncated = len(raw) > _MAX_READ_BYTES
+            chunk = raw[:_MAX_READ_BYTES]
+            try:
+                text = chunk.decode("utf-8")
+            except UnicodeDecodeError:
+                text = chunk.decode("utf-8", errors="replace")
+            detail = {
+                "path": str(target),
+                "bytes": len(raw),
+                "truncated": truncated,
+                "text": text,
             }
+            result = _ok("read_file", detail, started)
 
         elif action.action == "open_path":
             target = _resolve_under_allowlist(action.path or ".")
@@ -214,38 +310,62 @@ def execute_real_action(
             else:
                 raise RuntimeError("No opener available on this OS")
             detail = {"path": str(target), "opened": True}
-            result = {
-                "success": True,
-                "real": True,
-                "action": "open_path",
-                "detail": detail,
-                "execution_time": time.time() - started,
-                "steps_completed": 1,
-                "total_steps": 1,
-                "confidence": 1.0,
-                "intermediate_results": [detail],
-            }
+            result = _ok("open_path", detail, started)
 
         elif action.action == "write_note":
             body = (action.text or "").strip()
             if not body:
                 raise ValueError("Note text is empty")
-            ensure_sandbox()
             name = time.strftime("note_%Y%m%d_%H%M%S.txt")
-            target = (SANDBOX_DIR / name).resolve()
+            target = _resolve_under_sandbox(name)
             target.write_text(body + "\n", encoding="utf-8")
             detail = {"path": str(target), "bytes": target.stat().st_size}
-            result = {
-                "success": True,
-                "real": True,
-                "action": "write_note",
-                "detail": detail,
-                "execution_time": time.time() - started,
-                "steps_completed": 1,
-                "total_steps": 1,
-                "confidence": 1.0,
-                "intermediate_results": [detail],
-            }
+            result = _ok("write_note", detail, started)
+
+        elif action.action == "append_file":
+            body = (action.text or "").strip()
+            if not body:
+                raise ValueError("Append text is empty")
+            target = _resolve_under_sandbox(action.path or "")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8") as f:
+                f.write(body + "\n")
+            detail = {"path": str(target), "bytes": target.stat().st_size}
+            result = _ok("append_file", detail, started)
+
+        elif action.action == "mkdir":
+            target = _resolve_under_sandbox(action.path or "")
+            target.mkdir(parents=True, exist_ok=True)
+            detail = {"path": str(target), "created": True}
+            result = _ok("mkdir", detail, started)
+
+        elif action.action == "copy_file":
+            src = _resolve_under_allowlist(action.path or "")
+            dest = _resolve_under_sandbox(action.dest or "")
+            if not src.is_file():
+                raise FileNotFoundError(f"Source not a file: {src}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            detail = {"src": str(src), "dest": str(dest), "bytes": dest.stat().st_size}
+            result = _ok("copy_file", detail, started)
+
+        elif action.action == "delete_file":
+            target = _resolve_under_sandbox(action.path or "")
+            if not target.exists():
+                raise FileNotFoundError(f"Not found: {target}")
+            if target.is_dir():
+                # Only empty dirs
+                if any(target.iterdir()):
+                    raise PermissionError(
+                        "Refusing to delete non-empty directory "
+                        "(empty dirs only, sandbox only)"
+                    )
+                target.rmdir()
+                detail = {"path": str(target), "deleted": "dir"}
+            else:
+                target.unlink()
+                detail = {"path": str(target), "deleted": "file"}
+            result = _ok("delete_file", detail, started)
 
         else:
             raise ValueError(f"Unknown action: {action.action}")
@@ -283,9 +403,15 @@ def format_action_help() -> str:
     return (
         "Real CoAct actions (require consent):\n"
         f"  Sandbox: {sandbox}\n"
-        "  automate list [path]     — list files (default: sandbox)\n"
-        "  automate open <path>     — open file/folder in OS (allowlisted)\n"
-        "  automate note <text>     — write a note into the sandbox\n"
-        "  automate audit [n]       — show last N audit log entries\n"
-        "  Chat: include 'with consent' plus list/open/note wording\n"
+        "  automate info              — sandbox path + contents\n"
+        "  automate list [path]       — list files (default: sandbox)\n"
+        "  automate read <path>       — read text file (allowlisted)\n"
+        "  automate open <path>       — open file/folder in OS\n"
+        "  automate note <text>       — write timestamped note in sandbox\n"
+        "  automate append <file> <t> — append line to sandbox file\n"
+        "  automate mkdir <path>      — create dir in sandbox\n"
+        "  automate copy <src> <dst>  — copy into sandbox\n"
+        "  automate delete <path>     — delete sandbox file / empty dir\n"
+        "  automate audit [n]         — show last N audit log entries\n"
+        "  Chat: include 'with consent' plus matching wording\n"
     )
