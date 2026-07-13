@@ -128,7 +128,7 @@ def main() -> int:
     httpd = ThreadingHTTPServer((args.host, args.port), PWAHandler)
     print(f"PWA:   http://127.0.0.1:{args.port}/")
     print(f"LAN:   http://<your-pc-ip>:{args.port}/")
-    print(f"Proxy: /proxy/* → Ollama (header X-Ollama-URL or {DEFAULT_OLLAMA})")
+    print(f"Proxy: /proxy/* -> Ollama (header X-Ollama-URL or {DEFAULT_OLLAMA})")
     print("Ctrl+C to stop.")
     try:
         httpd.serve_forever()
