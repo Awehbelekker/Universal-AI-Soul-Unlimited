@@ -27,7 +27,7 @@
 - Offline STT: **faster-whisper** preferred for `listen` / mic; Google recognition only as fallback
 - CoAct real slice: `automate list|read|open|note|append|mkdir|copy|delete|info` (sandbox, consent + audit)
 - Android thin client: Settings screen for Ollama URL/model, persist + Test connection (`app_main.py`)
-- **PWA thin client**: `web/` + `python scripts/serve_pwa.py` (phone browser installable; Ollama CORS proxy)
+- **PWA thin client**: `web/` + `python scripts/serve_pwa.py` — **phone LAN proven** (Add to Home Screen / browser)
 - ThinkMesh multipass: planner → critic → synthesizer on deep routes; CLI `think <question>`
 - `python smoke_test_ollama.py` / `python scripts/setup_ollama.py`
 - Benchmark suite under `benchmarks/`
@@ -52,6 +52,6 @@ Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational
 
 ## Next milestones
 
-1. **You:** phone PWA proof — `scripts/ready_pwa_lan.ps1` then open the printed Phone URL → Test → Add to Home Screen
-2. Optional: APK build if native Android still desired
+1. Optional: APK build if native Android still desired (PWA covers daily phone use)
+2. Desktop daily-use polish (voice clone / values / memory) as you feel friction
 3. Optional: on-device models, overlay / OCR / sync / crypto

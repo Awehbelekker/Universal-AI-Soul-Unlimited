@@ -131,7 +131,7 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 | Desktop orchestrator | **Done** | Primary product surface |
 | Android chat UI | **Partial** | Kivy shell + Settings |
 | Android → network Ollama | **Partial** | URL/model persist, Test, retries; needs device APK proof |
-| **PWA thin client** | **Partial** | `web/` + `serve_pwa.py` proxy; phone install/test open |
+| **PWA thin client** | **Done** | Phone over LAN via `serve_pwa.py`; Settings + chat proven |
 | Android on-device inference | **Missing** | |
 | 360° overlay | **Missing** | Config only |
 | Bundled OCR | **Missing** | Optional import only |
@@ -155,8 +155,8 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 5. ~~**ThinkMesh depth**~~ — multipass planner/critic/synth on deep routes + `think` CLI  
 6. **On-device LIGHT/STANDARD** — only after thin client is solid  
 7. **Overlay / OCR / sync / crypto** — after core companion loop is trusted  
-8. **APK device proof** — Settings → LAN Ollama on hardware (optional if PWA covers daily use)
-9. **PWA phone proof** — Add to Home Screen over LAN + chat through proxy  
+8. **APK device proof** — optional if PWA covers daily phone use  
+9. ~~**PWA phone proof**~~ — LAN chat + Settings confirmed on mobile
 
 ---
 
