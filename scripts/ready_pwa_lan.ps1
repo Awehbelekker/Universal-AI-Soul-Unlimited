@@ -10,10 +10,10 @@ $ruleName = "UniversalSoul-PWA-$Port"
 $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
 if (-not $existing) {
     try {
-        New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private,Domain | Out-Null
+        New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private,Domain -ErrorAction Stop | Out-Null
         Write-Host "Firewall: allowed TCP $Port (Private/Domain)" -ForegroundColor Green
     } catch {
-        Write-Host "Firewall: could not add rule (run as Admin): $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "Firewall: Access denied - re-run this script as Administrator if the phone cannot connect." -ForegroundColor Yellow
     }
 } else {
     Write-Host "Firewall: rule already present ($ruleName)" -ForegroundColor Green
