@@ -25,7 +25,7 @@
 - Persisted values / personality in `data/user_profiles/` + CLI `onboard` / `values`
 - Desktop voice: **Edge neural TTS** default; **XTTS cloning** via `voice clone <wav>` after `python scripts/setup_voice_clone.py`
 - Offline STT: **faster-whisper** preferred for `listen` / mic; Google recognition only as fallback
-- CoAct real slice: `automate list|open|note` under `data/` sandbox with consent prompt + `data/automation_audit.jsonl`
+- CoAct real slice: `automate list|read|open|note|append|mkdir|copy|delete|info` (sandbox, consent + audit)
 - Android thin client: Settings screen for Ollama URL/model, persist + Test connection (`app_main.py`)
 - ThinkMesh multipass: planner → critic → synthesizer on deep routes; CLI `think <question>`
 - `python smoke_test_ollama.py` / `python scripts/setup_ollama.py`
