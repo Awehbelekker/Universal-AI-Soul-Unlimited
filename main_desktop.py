@@ -223,8 +223,16 @@ class UniversalSoulAI:
                 await self._ensure_thinkmesh()
                 if self.thinkmesh_adapter:
                     think = await self.thinkmesh_adapter.think(user_input)
+                    engine = (think.meta or {}).get("engine", "thinkmesh")
                     hrm_input = (
-                        f"[Analysis: {think.content}]\n{hrm_input}"
+                        f"[ThinkMesh:{engine} analysis]\n"
+                        f"{think.content}\n\n"
+                        f"{hrm_input}"
+                    )
+                    logger.info(
+                        "ThinkMesh %s confidence=%.2f",
+                        engine,
+                        think.confidence,
                     )
 
             ai_response = await self.hrm_engine.process_request(
@@ -877,6 +885,7 @@ async def main():
         print("Clone: 'voice clone <wav|record|demo>', 'voice clone clear'")
         print("  (Clone = any speaker from audio sample; not personality names)")
         print("CoAct: 'automate list|open|note|audit|help' (real OS actions)")
+        print("ThinkMesh: 'think <question>' (planner/critic/synth multipass)")
         print("-" * 50)
 
         user_id = "default"
@@ -1084,6 +1093,33 @@ async def main():
                             f"Failed/blocked [{result.get('action')}]: "
                             f"{result.get('error_message')}"
                         )
+                    continue
+                elif user_input.lower() == "think" or user_input.lower().startswith(
+                    "think "
+                ):
+                    prompt = user_input[5:].strip()
+                    if not prompt or prompt.lower() in ("help", "?"):
+                        print(
+                            "\nThinkMesh multipass (planner → critic → synthesizer)\n"
+                            "  think <question>\n"
+                            "Deep chat routes also call this automatically."
+                        )
+                        continue
+                    await soul_ai._ensure_thinkmesh()
+                    if not soul_ai.thinkmesh_adapter:
+                        print("\nThinkMesh unavailable.")
+                        continue
+                    print("\nThinkMesh running multipass…")
+                    think = await soul_ai.thinkmesh_adapter.think(prompt)
+                    engine = (think.meta or {}).get("engine", "?")
+                    print(f"\n[{engine}] confidence={think.confidence:.2f}")
+                    steps = (think.meta or {}).get("steps") or []
+                    for step in steps:
+                        role = step.get("role", "?")
+                        body = (step.get("content") or "").strip()
+                        preview = body if len(body) < 400 else body[:400] + "…"
+                        print(f"\n— {role} —\n{preview}")
+                    print(f"\n— synthesis —\n{think.content}")
                     continue
                 elif user_input.lower() == "listen":
                     if not soul_ai.desktop_voice or not soul_ai.desktop_voice.status()["mic_available"]:

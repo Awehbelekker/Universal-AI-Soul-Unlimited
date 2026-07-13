@@ -85,6 +85,8 @@ class ThinkMeshOrchestrator:
         self.strategy = OrchestrationStrategy.ADAPTIVE
         self.task_queue: asyncio.Queue = asyncio.Queue()
         self._running = False
+        # Optional callable: async (agent_id, prompt, task) -> Any
+        self.agent_executor = None
 
     async def initialize(self):
         """Initialize orchestrator"""
@@ -98,6 +100,10 @@ class ThinkMeshOrchestrator:
             "Orchestrator initialized with strategy: "
             f"{self.strategy.value}"
         )
+
+    def set_agent_executor(self, executor) -> None:
+        """Inject real agent runner: async (agent_id, prompt, task) -> result."""
+        self.agent_executor = executor
 
     async def register_agent(
         self,
@@ -457,20 +463,37 @@ class ThinkMeshOrchestrator:
         agent.current_load += 1
 
         try:
-            # Simulate agent execution (replace with actual agent call)
             logger.debug(f"Executing task {task.id} on agent {agent.agent_id}")
-            await asyncio.sleep(0.1)  # Placeholder for actual execution
+            prompt = (
+                task.requirements.get("prompt")
+                or task.requirements.get("query")
+                or str(task.requirements)
+            )
 
-            # Update performance score based on success
-            agent.performance_score = min(1.0, agent.performance_score + 0.01)
+            if self.agent_executor is not None:
+                result = await self.agent_executor(agent.agent_id, prompt, task)
+                agent.performance_score = min(
+                    1.0, agent.performance_score + 0.01
+                )
+                return {
+                    "status": "success",
+                    "agent_id": agent.agent_id,
+                    "task_id": task.id,
+                    "content": result,
+                    "timestamp": datetime.now().isoformat(),
+                }
 
+            # No executor: structured placeholder (not a fake success narrative)
             result = {
-                "status": "success",
+                "status": "skipped",
                 "agent_id": agent.agent_id,
                 "task_id": task.id,
-                "timestamp": datetime.now().isoformat()
+                "content": (
+                    f"[{agent.agent_id}] no executor wired; "
+                    f"prompt={str(prompt)[:200]}"
+                ),
+                "timestamp": datetime.now().isoformat(),
             }
-
             return result
 
         except Exception as e:

@@ -32,6 +32,7 @@ _DEEP_KEYWORDS = (
     "prove", "analyze", "architect", "design", "refactor",
     "optimize", "compare", "evaluate", "synthesize", "debug",
     "multi-step", "complex", "orchestrate", "strategy",
+    "think about", "thinkmesh", "trade-off", "tradeoff",
 )
 
 _STANDARD_KEYWORDS = (

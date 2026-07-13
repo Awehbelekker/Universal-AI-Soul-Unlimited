@@ -98,8 +98,8 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 | Capability | Status | Notes |
 |------------|--------|-------|
 | 12 module packages present | **Partial** | Scaffold / modules on disk |
-| Adapter into desktop orchestrator | **Partial** | Wired; not the primary daily brain |
-| Real multi-agent product mesh | **Missing** | Strategies claimed; depth not productized |
+| Adapter into desktop orchestrator | **Partial** | Deep routes + `think` CLI use multipass |
+| Real multi-agent product mesh | **Partial** | Planner/critic/synth over HRM/Ollama; full mesh still thin |
 
 ### Models / tiers
 | Capability | Status | Notes |
@@ -151,9 +151,10 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 2. ~~**Offline STT**~~ — Whisper local for mic (`faster-whisper`; Google fallback)  
 3. ~~**Real CoAct slice**~~ — allowlisted list/open/note with consent + audit  
 4. ~~**Android thin client**~~ — Settings + persisted LAN Ollama client (APK device proof still open)  
-5. **ThinkMesh depth** — make orchestration earn its place vs single HRM path  
+5. ~~**ThinkMesh depth**~~ — multipass planner/critic/synth on deep routes + `think` CLI  
 6. **On-device LIGHT/STANDARD** — only after thin client is solid  
 7. **Overlay / OCR / sync / crypto** — after core companion loop is trusted  
+8. **Expand CoAct allowlist** — more real actions as needed  
 
 ---
 
