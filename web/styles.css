@@ -202,8 +202,24 @@ label.check input {
   width: auto;
 }
 
-label input {
+label input,
+label select {
   border-radius: 10px;
+}
+
+label select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  padding: 0.75rem 1rem;
+  font: inherit;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.8em;
+  color: var(--accent);
 }
 
 .row {

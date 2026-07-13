@@ -1,8 +1,20 @@
-const STORAGE_KEY = "usa_pwa_settings_v1";
+const STORAGE_KEY = "usa_pwa_settings_v2";
+const HISTORY_KEY = "usa_pwa_history_v1";
 const DEFAULTS = {
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "llama3.2:3b",
   speakReplies: true,
+  companionName: "Universal Soul",
+  tone: "friendly",
+};
+
+const TONE_HINTS = {
+  friendly: "warm, supportive, conversational",
+  professional: "clear, concise, businesslike",
+  calm: "gentle, steady, unhurried",
+  energetic: "upbeat, motivating, lively",
+  creative: "imaginative, playful, metaphorical when useful",
+  analytical: "precise, structured, reason step-by-step briefly",
 };
 
 function normalizeOllamaUrl(raw) {
@@ -23,8 +35,10 @@ function normalizeOllamaUrl(raw) {
 function loadSettings() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS };
-    const data = JSON.parse(raw);
+    // migrate v1
+    const legacy = !raw ? localStorage.getItem("usa_pwa_settings_v1") : null;
+    const data = JSON.parse(raw || legacy || "{}");
+    const tone = (data.tone || DEFAULTS.tone).toLowerCase();
     return {
       ollamaUrl: normalizeOllamaUrl(data.ollamaUrl || DEFAULTS.ollamaUrl),
       ollamaModel: (data.ollamaModel || DEFAULTS.ollamaModel).trim(),
@@ -32,6 +46,9 @@ function loadSettings() {
         typeof data.speakReplies === "boolean"
           ? data.speakReplies
           : DEFAULTS.speakReplies,
+      companionName: (data.companionName || DEFAULTS.companionName).trim() ||
+        DEFAULTS.companionName,
+      tone: TONE_HINTS[tone] ? tone : DEFAULTS.tone,
     };
   } catch {
     return { ...DEFAULTS };
@@ -39,17 +56,37 @@ function loadSettings() {
 }
 
 function saveSettings(settings) {
+  const tone = (settings.tone || DEFAULTS.tone).toLowerCase();
   const next = {
     ollamaUrl: normalizeOllamaUrl(settings.ollamaUrl),
     ollamaModel: (settings.ollamaModel || DEFAULTS.ollamaModel).trim(),
     speakReplies: !!settings.speakReplies,
+    companionName:
+      (settings.companionName || DEFAULTS.companionName).trim() ||
+      DEFAULTS.companionName,
+    tone: TONE_HINTS[tone] ? tone : DEFAULTS.tone,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   return next;
 }
 
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const data = raw ? JSON.parse(raw) : [];
+    return Array.isArray(data) ? data.slice(-20) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-20)));
+}
+
 const state = {
   settings: loadSettings(),
+  history: loadHistory(),
   busy: false,
   audio: null,
   voiceMeta: null,
@@ -60,16 +97,30 @@ const formEl = document.getElementById("composer");
 const inputEl = document.getElementById("message");
 const sendBtn = document.getElementById("sendBtn");
 const modeLine = document.getElementById("modeLine");
+const brandName = document.getElementById("brandName");
 const settingsBtn = document.getElementById("settingsBtn");
 const dialog = document.getElementById("settingsDialog");
 const settingsForm = document.getElementById("settingsForm");
 const urlInput = document.getElementById("ollamaUrl");
 const modelInput = document.getElementById("ollamaModel");
+const nameInput = document.getElementById("companionName");
+const toneInput = document.getElementById("tone");
 const speakInput = document.getElementById("speakReplies");
 const voiceLine = document.getElementById("voiceLine");
 const settingsStatus = document.getElementById("settingsStatus");
 const testBtn = document.getElementById("testBtn");
 const testVoiceBtn = document.getElementById("testVoiceBtn");
+const clearChatBtn = document.getElementById("clearChatBtn");
+
+function companionLabel() {
+  return state.settings.companionName || "Universal Soul";
+}
+
+function applyBrand() {
+  const name = companionLabel();
+  brandName.textContent = name;
+  document.title = name;
+}
 
 function addBubble(role, text) {
   const div = document.createElement("div");
@@ -86,10 +137,25 @@ function setMode(text) {
 function fillSettingsForm() {
   urlInput.value = state.settings.ollamaUrl;
   modelInput.value = state.settings.ollamaModel;
+  nameInput.value = state.settings.companionName;
+  toneInput.value = state.settings.tone;
   speakInput.checked = !!state.settings.speakReplies;
   settingsStatus.textContent = "";
   settingsStatus.className = "status";
   refreshVoiceLine();
+}
+
+function systemPrompt() {
+  const name = companionLabel();
+  const tone = state.settings.tone;
+  const hint = TONE_HINTS[tone] || TONE_HINTS.friendly;
+  return (
+    `You are ${name}, the user's Universal Soul companion — a local-first personal AI. ` +
+    `Your name is ${name}. Speak in a ${tone} tone (${hint}). ` +
+    "You run privately on their desktop/phone via Ollama, with optional voice and careful automation. " +
+    "Use prior conversation turns for continuity — do not repeat the same greeting or generic offer every time. " +
+    "Prefer concise, varied, helpful answers. Do not invent unshipped features."
+  );
 }
 
 async function refreshVoiceLine() {
@@ -101,10 +167,9 @@ async function refreshVoiceLine() {
       voiceLine.textContent = `Voice PC: unavailable (${data.error || "error"})`;
       return;
     }
-    const kind = data.cloning ? "clone" : data.tts_engine || "unknown";
     voiceLine.textContent = data.cloning
-      ? `Voice PC: XTTS clone ready`
-      : `Voice PC: ${kind} (${data.voice_id || "default"})`;
+      ? `Voice PC: XTTS clone ready (your sample)`
+      : `Voice PC: Edge ${data.voice_id || "neural"} — clone optional on desktop`;
   } catch (err) {
     voiceLine.textContent = `Voice PC: unreachable (${err.message})`;
   }
@@ -129,17 +194,22 @@ async function probe() {
   return data;
 }
 
+function buildPrompt(message) {
+  const parts = [systemPrompt(), ""];
+  for (const turn of state.history.slice(-12)) {
+    parts.push(`${turn.role === "user" ? "User" : companionLabel()}: ${turn.text}`);
+  }
+  parts.push(`User: ${message}`);
+  parts.push(`${companionLabel()}:`);
+  return parts.join("\n");
+}
+
 async function chat(message) {
   const payload = {
     model: state.settings.ollamaModel,
-    prompt:
-      "You are Universal Soul AI — a local-first personal companion for this user. " +
-      "Universal Soul runs privately on their desktop/phone: chat via Ollama, optional voice, " +
-      "memory/values, and careful automation. Prefer concise, helpful answers. " +
-      "If asked what you are, explain that briefly without inventing unshipped features.\n\n" +
-      `User: ${message}\n\nAssistant:`,
+    prompt: buildPrompt(message),
     stream: false,
-    options: { num_predict: 256, temperature: 0.7 },
+    options: { num_predict: 320, temperature: 0.85 },
   };
   const res = await proxyFetch("/proxy/api/generate", {
     method: "POST",
@@ -158,7 +228,10 @@ async function speak(text) {
     const res = await fetch("/api/speak", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, personality: "friendly" }),
+      body: JSON.stringify({
+        text,
+        personality: state.settings.tone || "friendly",
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -173,15 +246,22 @@ async function speak(text) {
     const audio = new Audio(url);
     state.audio = audio;
     const engine = res.headers.get("X-Soul-TTS-Engine") || "tts";
-    setMode(`${state.settings.ollamaModel} · speaking (${engine})`);
+    setMode(`${companionLabel()} · speaking (${engine})`);
     await audio.play();
     audio.onended = () => {
       URL.revokeObjectURL(url);
-      setMode(`${state.settings.ollamaModel} · ready`);
+      setMode(`${companionLabel()} · ready`);
     };
   } catch (err) {
     addBubble("system", `Voice error: ${err.message}`);
   }
+}
+
+function clearChat() {
+  state.history = [];
+  saveHistory(state.history);
+  chatEl.innerHTML = "";
+  addBubble("system", `Chat cleared. ${companionLabel()} is listening fresh.`);
 }
 
 formEl.addEventListener("submit", async (e) => {
@@ -195,8 +275,11 @@ formEl.addEventListener("submit", async (e) => {
   setMode("Thinking…");
   try {
     const reply = await chat(message);
+    state.history.push({ role: "user", text: message });
+    state.history.push({ role: "assistant", text: reply });
+    saveHistory(state.history);
     addBubble("ai", reply);
-    setMode(`${state.settings.ollamaModel} · ready`);
+    setMode(`${companionLabel()} · ready`);
     await speak(reply);
   } catch (err) {
     addBubble("system", `Ollama error: ${err.message}`);
@@ -218,6 +301,8 @@ testBtn.addEventListener("click", async () => {
     ...state.settings,
     ollamaUrl: urlInput.value,
     ollamaModel: modelInput.value,
+    companionName: nameInput.value,
+    tone: toneInput.value,
     speakReplies: speakInput.checked,
   };
   settingsStatus.className = "status";
@@ -239,16 +324,28 @@ testBtn.addEventListener("click", async () => {
 testVoiceBtn.addEventListener("click", async () => {
   state.settings.speakReplies = true;
   speakInput.checked = true;
+  state.settings.tone = toneInput.value || state.settings.tone;
+  state.settings.companionName =
+    nameInput.value.trim() || state.settings.companionName;
+  applyBrand();
   settingsStatus.className = "status";
   settingsStatus.textContent = "Synthesizing on PC…";
   try {
-    await speak("Hello from Universal Soul. This is my voice on your phone.");
+    await speak(
+      `Hello — I'm ${companionLabel()}. This is my ${state.settings.tone} voice on your phone.`
+    );
     settingsStatus.className = "status ok";
     settingsStatus.textContent = "Voice played (check phone volume).";
   } catch (err) {
     settingsStatus.className = "status err";
     settingsStatus.textContent = String(err.message || err);
   }
+});
+
+clearChatBtn.addEventListener("click", () => {
+  clearChat();
+  settingsStatus.className = "status ok";
+  settingsStatus.textContent = "Chat history cleared.";
 });
 
 settingsForm.addEventListener("submit", (e) => {
@@ -258,25 +355,36 @@ settingsForm.addEventListener("submit", (e) => {
   state.settings = saveSettings({
     ollamaUrl: urlInput.value,
     ollamaModel: modelInput.value,
+    companionName: nameInput.value,
+    tone: toneInput.value,
     speakReplies: speakInput.checked,
   });
+  applyBrand();
   settingsStatus.className = "status ok";
   settingsStatus.textContent = "Saved locally on this device.";
-  setMode(`${state.settings.ollamaModel} · saved`);
+  setMode(`${companionLabel()} · saved`);
   dialog.close();
 });
 
 async function boot() {
+  applyBrand();
   addBubble(
     "system",
-    "Universal Soul thin client (PWA). Voice replies use your PC (Edge or clone)."
+    `${companionLabel()} thin client. Set a name & tone in Settings. Voice uses your PC (Edge or clone).`
   );
-  setMode(`${state.settings.ollamaModel} · checking`);
+  setMode(`${companionLabel()} · checking`);
   await refreshVoiceLine();
   try {
     await probe();
-    setMode(`${state.settings.ollamaModel} · ready`);
-    addBubble("ai", "Connected to Ollama. Ask me anything.");
+    setMode(`${companionLabel()} · ready`);
+    if (state.history.length) {
+      addBubble(
+        "system",
+        `Restored ${state.history.length} recent turns. Say hello or continue.`
+      );
+    } else {
+      addBubble("ai", `Hi — I'm ${companionLabel()}. What's on your mind?`);
+    }
   } catch (err) {
     setMode("Offline — open Settings");
     addBubble(

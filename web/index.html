@@ -17,7 +17,7 @@
       <div class="brand">
         <span class="mark" aria-hidden="true"></span>
         <div>
-          <h1>Universal Soul</h1>
+          <h1 id="brandName">Universal Soul</h1>
           <p id="modeLine" class="sub">Thin client</p>
         </div>
       </div>
@@ -34,12 +34,26 @@
 
   <dialog id="settingsDialog">
     <form method="dialog" id="settingsForm" class="settings">
-      <h2>Ollama / LAN</h2>
+      <h2>Companion &amp; connection</h2>
       <p class="hint">
-        Phone on the same Wi‑Fi: open this PC’s LAN URL (port 8765), then Test.
-        Chat goes through the PWA proxy — Ollama URL can stay 127.0.0.1 on the PC.
-        Install: browser menu → Add to Home Screen.
+        Name and tone shape how they talk. Voice is synthesized on your PC
+        (Edge neural, or your XTTS clone if set on desktop).
       </p>
+      <label>
+        Companion name
+        <input id="companionName" name="companionName" placeholder="e.g. Aria, Soul, Nova" maxlength="40" />
+      </label>
+      <label>
+        Tone
+        <select id="tone" name="tone">
+          <option value="friendly">Friendly</option>
+          <option value="professional">Professional</option>
+          <option value="calm">Calm</option>
+          <option value="energetic">Energetic</option>
+          <option value="creative">Creative</option>
+          <option value="analytical">Analytical</option>
+        </select>
+      </label>
       <label>
         Ollama URL / host
         <input id="ollamaUrl" name="ollamaUrl" placeholder="192.168.1.10 or http://127.0.0.1:11434" />
@@ -50,13 +64,19 @@
       </label>
       <label class="check">
         <input id="speakReplies" name="speakReplies" type="checkbox" />
-        Speak replies (PC voice — Edge or your clone)
+        Speak replies (PC voice)
       </label>
       <p id="voiceLine" class="hint"></p>
+      <p class="hint">
+        Cloning: on the PC run <code>voice clone record</code> or
+        <code>voice clone demo</code> in desktop CLI, then restart
+        <code>serve_pwa.py</code>.
+      </p>
       <p id="settingsStatus" class="status" role="status"></p>
       <div class="row">
         <button type="button" id="testBtn" class="ghost">Test</button>
         <button type="button" id="testVoiceBtn" class="ghost">Test voice</button>
+        <button type="button" id="clearChatBtn" class="ghost">Clear chat</button>
         <button type="submit" id="saveBtn" value="save">Save</button>
         <button type="submit" class="ghost" value="cancel">Close</button>
       </div>
