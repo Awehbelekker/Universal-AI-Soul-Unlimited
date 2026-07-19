@@ -575,6 +575,7 @@ def _tts_cache_key(
     rate_bias: Optional[int],
     pitch_bias: Optional[int],
     force_edge: bool,
+    engine: Optional[str] = None,
 ) -> str:
     return "|".join(
         [
@@ -584,6 +585,7 @@ def _tts_cache_key(
             str(rate_bias if rate_bias is not None else 0),
             str(pitch_bias if pitch_bias is not None else 0),
             "1" if force_edge else "0",
+            (engine or "").strip().lower(),
         ]
     )
 
@@ -596,25 +598,31 @@ def synthesize_sync(
     rate_bias: Optional[int] = None,
     pitch_bias: Optional[int] = None,
     force_edge: bool = False,
+    engine: Optional[str] = None,
     max_chars: int = 420,
 ) -> Tuple[Optional[bytes], Optional[str], Dict[str, Any]]:
-    """Run DesktopVoiceService.synthesize (cached for short identical lines)."""
+    """Run DesktopVoiceService.synthesize (cached for short identical lines).
+
+    ``engine`` is the requested path: "natural" (Kokoro, offline), "fast"
+    (Edge), or "authentic" (XTTS clone). Cache stores (bytes, mime, engine_meta)
+    so labels stay accurate across engines that share a mime type (WAV).
+    """
     from core.voice_pipeline.desktop_voice import speech_for_tts
 
     spoken = speech_for_tts(text, max_chars=min(max_chars, 520))
     if not spoken:
         return None, None, {"engine": None, "error": "nothing speakable"}
+    mode = (engine or "").strip().lower()
     key = _tts_cache_key(
-        spoken, personality, voice_id, rate_bias, pitch_bias, force_edge
+        spoken, personality, voice_id, rate_bias, pitch_bias, force_edge, mode
     )
     with _tts_cache_lock:
         hit = _tts_cache.get(key)
     if hit:
-        data, mime = hit
-        cached_clone = mime == "audio/wav" and not force_edge
+        data, mime, cached_engine, cached_cloning = hit
         return data, mime, {
-            "engine": "xtts-clone" if cached_clone else "edge",
-            "cloning": cached_clone,
+            "engine": cached_engine,
+            "cloning": cached_cloning,
             "voice_id": voice_id,
             "cached": True,
         }
@@ -622,9 +630,9 @@ def synthesize_sync(
     async def _run():
         svc = get_voice_service()
         await svc.initialize(tts_only=True)
-        # Honor the caller's force_edge. Real replies pass force_edge=False so a
-        # configured XTTS clone is used (authentic timbre); previews force Edge
-        # for speed. Do not mutate shared service style from request params.
+        # Honor the caller's engine/force_edge. Real replies pass force_edge=False
+        # so a configured XTTS clone is used (authentic timbre) when requested;
+        # previews force Edge for speed. Do not mutate shared service style.
         result = await svc.synthesize(
             spoken,
             personality=personality,
@@ -632,14 +640,21 @@ def synthesize_sync(
             rate_bias=rate_bias if rate_bias is not None else 0,
             pitch_bias=pitch_bias if pitch_bias is not None else 0,
             force_edge=force_edge,
+            engine=mode or None,
             max_chars=max_chars,
         )
         st = svc.status()
-        cloning_active = bool(
-            not force_edge and st.get("clone_wav") and st.get("coqui_available")
-        )
+        if result is None:
+            return None, None, {
+                "engine": None,
+                "cloning": False,
+                "voice_id": voice_id or st.get("voice_id"),
+                "cached": False,
+            }
+        data, mime = result
+        engine_label, cloning_active = _label_engine(mode, mime, force_edge, st)
         meta = {
-            "engine": "xtts-clone" if cloning_active else "edge",
+            "engine": engine_label,
             "cloning": cloning_active,
             "clone_wav": st.get("clone_wav"),
             "voice_id": voice_id or st.get("voice_id"),
@@ -648,9 +663,6 @@ def synthesize_sync(
             "preview": force_edge,
             "cached": False,
         }
-        if result is None:
-            return None, None, meta
-        data, mime = result
         return data, mime, meta
 
     data, mime, meta = asyncio.run(_run())
@@ -658,8 +670,35 @@ def synthesize_sync(
         with _tts_cache_lock:
             if len(_tts_cache) >= _TTS_CACHE_MAX:
                 _tts_cache.pop(next(iter(_tts_cache)), None)
-            _tts_cache[key] = (data, mime)
+            _tts_cache[key] = (
+                data, mime, meta.get("engine"), bool(meta.get("cloning"))
+            )
     return data, mime, meta
+
+
+def _label_engine(
+    mode: str, mime: str, force_edge: bool, st: Dict[str, Any]
+) -> Tuple[Optional[str], bool]:
+    """Derive an accurate engine label + cloning flag from the actual output.
+
+    Edge produces MP3 (audio/mpeg); Kokoro and XTTS both produce WAV. We
+    disambiguate WAV by the requested mode and whether a clone is configured.
+    """
+    if mime == "audio/mpeg":
+        return "edge", False
+    # WAV output: Kokoro (natural) or XTTS clone (authentic).
+    clone_ready = bool(st.get("clone_wav") and st.get("coqui_available"))
+    if mode == "natural" and st.get("kokoro_available"):
+        return "kokoro", False
+    if mode == "authentic" and clone_ready:
+        return "xtts-clone", True
+    if mode in ("", "fast") and not force_edge and clone_ready:
+        # Legacy path: clone used when configured and not forced to edge.
+        return "xtts-clone", True
+    # Any other WAV came from the Kokoro/local offline fallback.
+    if st.get("kokoro_available"):
+        return "kokoro", False
+    return "local-neural", False
 
 
 def warmup_tts() -> None:
@@ -678,7 +717,10 @@ def warmup_tts() -> None:
 
 def voice_status_sync() -> Dict[str, Any]:
     async def _run():
-        from core.voice_pipeline.desktop_voice import voice_catalog
+        from core.voice_pipeline.desktop_voice import (
+            kokoro_voice_catalog,
+            voice_catalog,
+        )
 
         svc = get_voice_service()
         await svc.initialize(tts_only=True)
@@ -690,13 +732,16 @@ def voice_status_sync() -> Dict[str, Any]:
             "clone_wav": st.get("clone_wav"),
             "edge_available": st.get("edge_available"),
             "coqui_available": st.get("coqui_available"),
+            "kokoro_available": st.get("kokoro_available"),
             "voice_id": st.get("voice_id"),
+            "kokoro_voice": st.get("kokoro_voice"),
             "rate_bias": st.get("rate_bias", 0),
             "pitch_bias": st.get("pitch_bias", 0),
             "voices": voice_catalog(),
+            "kokoro_voices": kokoro_voice_catalog(),
             "tip": (
-                "Breath pauses + emotion cues improve Edge realism. "
-                "Upload a 6–15s sample under Voice clone for real timbre (needs Coqui)."
+                "Natural (Kokoro) is offline + fast. Fast (Edge) is online. "
+                "Upload a 6–15s sample under Voice clone for Authentic timbre."
             ),
         }
 
@@ -1250,12 +1295,16 @@ class PWAHandler(SimpleHTTPRequestHandler):
         if not text:
             return self._json(400, {"error": "text required"})
 
-        force_edge = bool(
-            body.get("force_edge")
-            or body.get("preview")
-            or str(body.get("engine") or "").lower() == "edge"
-        )
+        # Normalize the requested engine. PWA sends natural|fast|authentic|auto;
+        # "edge" is a legacy alias for fast. Previews always use fast for speed.
+        raw_engine = str(body.get("engine") or "").strip().lower()
+        engine = {"edge": "fast"}.get(raw_engine, raw_engine)
         preview = bool(body.get("preview"))
+        if preview:
+            engine = "fast"
+        force_edge = bool(
+            body.get("force_edge") or preview or engine == "fast"
+        )
         max_chars = 180 if preview else 520
         if body.get("max_chars") is not None:
             try:
@@ -1271,6 +1320,7 @@ class PWAHandler(SimpleHTTPRequestHandler):
                 rate_bias=rate_bias,
                 pitch_bias=pitch_bias,
                 force_edge=force_edge,
+                engine=engine or None,
                 max_chars=max_chars,
             )
         except Exception as exc:

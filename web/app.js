@@ -8,17 +8,19 @@ const DEFAULTS = {
   companionName: "Universal Soul",
   tone: "friendly",
   voiceId: "auto",
+  kokoroVoice: "af_heart",
   voiceTempo: 0,
   voicePitch: 0,
   // Voice engine for spoken replies:
-  //  "auto"  - authentic XTTS clone, but fall back to fast Edge if it lags
-  //  "clone" - always the authentic clone (may be slow)
-  //  "fast"  - always fast Edge neural (Jenny), never the clone
-  voiceEngine: "auto",
+  //  "natural"   - Kokoro-82M, natural + fully offline (mobile default)
+  //  "fast"      - fast Edge neural (Jenny), online
+  //  "authentic" - your cloned voice via XTTS (may be slow)
+  //  "auto"      - authentic clone, but fall back to fast Edge if it lags
+  voiceEngine: "natural",
   theme: "auto",
 };
 
-const VOICE_ENGINES = ["auto", "clone", "fast"];
+const VOICE_ENGINES = ["natural", "fast", "authentic", "auto"];
 // If a clone chunk takes longer than this, "auto" mode drops to fast Edge for
 // the rest of the reply so speech stays responsive.
 const CLONE_LAG_MS = 12000;
@@ -65,6 +67,9 @@ function loadSettings() {
         DEFAULTS.companionName,
       tone: TONE_HINTS[tone] ? tone : DEFAULTS.tone,
       voiceId: (data.voiceId || DEFAULTS.voiceId).trim() || DEFAULTS.voiceId,
+      kokoroVoice:
+        (data.kokoroVoice || DEFAULTS.kokoroVoice).trim() ||
+        DEFAULTS.kokoroVoice,
       voiceEngine: VOICE_ENGINES.includes(data.voiceEngine)
         ? data.voiceEngine
         : DEFAULTS.voiceEngine,
@@ -96,6 +101,9 @@ function saveSettings(settings) {
       DEFAULTS.companionName,
     tone: TONE_HINTS[tone] ? tone : DEFAULTS.tone,
     voiceId: (settings.voiceId || DEFAULTS.voiceId).trim() || DEFAULTS.voiceId,
+    kokoroVoice:
+      (settings.kokoroVoice || DEFAULTS.kokoroVoice).trim() ||
+      DEFAULTS.kokoroVoice,
     voiceEngine: VOICE_ENGINES.includes(settings.voiceEngine)
       ? settings.voiceEngine
       : DEFAULTS.voiceEngine,
@@ -170,6 +178,7 @@ const toneInput = document.getElementById("tone");
 const speakInput = document.getElementById("speakReplies");
 const voiceLine = document.getElementById("voiceLine");
 const voiceIdInput = document.getElementById("voiceId");
+const kokoroVoiceInput = document.getElementById("kokoroVoice");
 const voiceEngineInput = document.getElementById("voiceEngine");
 const voiceTempoInput = document.getElementById("voiceTempo");
 const voicePitchInput = document.getElementById("voicePitch");
@@ -645,8 +654,11 @@ function fillSettingsForm() {
   toneInput.value = state.settings.tone;
   speakInput.checked = !!state.settings.speakReplies;
   if (voiceIdInput) voiceIdInput.value = state.settings.voiceId || "auto";
+  if (kokoroVoiceInput)
+    kokoroVoiceInput.value =
+      state.settings.kokoroVoice || DEFAULTS.kokoroVoice;
   if (voiceEngineInput)
-    voiceEngineInput.value = state.settings.voiceEngine || "auto";
+    voiceEngineInput.value = state.settings.voiceEngine || "natural";
   if (voiceTempoInput) {
     voiceTempoInput.value = String(state.settings.voiceTempo || 0);
     if (tempoVal) tempoVal.textContent = voiceTempoInput.value;
@@ -1007,13 +1019,37 @@ async function refreshVoiceLine() {
       voiceIdInput.value = current;
       if (voiceIdInput.value !== current) voiceIdInput.value = "auto";
     }
+    if (
+      kokoroVoiceInput &&
+      Array.isArray(data.kokoro_voices) &&
+      data.kokoro_voices.length
+    ) {
+      const current =
+        kokoroVoiceInput.value ||
+        state.settings.kokoroVoice ||
+        DEFAULTS.kokoroVoice;
+      kokoroVoiceInput.innerHTML = "";
+      for (const v of data.kokoro_voices) {
+        const opt = document.createElement("option");
+        opt.value = v.id;
+        opt.textContent = v.label || v.id;
+        kokoroVoiceInput.appendChild(opt);
+      }
+      kokoroVoiceInput.value = current;
+      if (kokoroVoiceInput.value !== current)
+        kokoroVoiceInput.value = DEFAULTS.kokoroVoice;
+    }
     if (!data.ok) {
       voiceLine.textContent = `Voice PC: unavailable (${data.error || "error"})`;
       return;
     }
-    voiceLine.textContent = data.cloning
-      ? `Voice PC: XTTS clone ready · ${data.clone_wav || "sample set"}`
-      : `Voice PC: Edge neural · ${data.voice_id || "auto"} — upload a sample below for real timbre`;
+    if (data.cloning) {
+      voiceLine.textContent = `Voice PC: XTTS clone ready · ${data.clone_wav || "sample set"}`;
+    } else if (data.kokoro_available) {
+      voiceLine.textContent = `Voice PC: Natural (Kokoro, offline) · ${data.kokoro_voice || "af_heart"}`;
+    } else {
+      voiceLine.textContent = `Voice PC: Edge neural · ${data.voice_id || "auto"} — upload a sample below for real timbre`;
+    }
     if (cloneStatus && data.cloning) {
       cloneStatus.className = "status ok";
       cloneStatus.textContent = "Clone active on PC.";
@@ -1406,11 +1442,22 @@ async function speakOneChunk(text, opts = {}) {
   const line = cleanSpeakText(text);
   if (!line || /xmlns|www\.w3\.org/i.test(line)) return;
   // Decide the engine. Previews are always fast Edge. For real replies the
-  // user's voiceEngine choice applies; in "auto" mode a lagging clone chunk
-  // trips state.cloneLagged so the rest of the reply uses fast Edge.
-  const engine = state.settings.voiceEngine || "auto";
-  let forceEdge = preview || engine === "fast";
-  if (!forceEdge && engine === "auto" && state.cloneLagged) forceEdge = true;
+  // user's voiceEngine choice applies:
+  //  natural   -> Kokoro (offline, natural) — the mobile default
+  //  fast      -> Edge neural (online)
+  //  authentic -> XTTS clone
+  //  auto      -> clone, but a lagging chunk trips state.cloneLagged so the
+  //               rest of the reply falls back to fast Edge for responsiveness.
+  const choice = state.settings.voiceEngine || "natural";
+  let engine = preview ? "fast" : choice;
+  if (engine === "auto") {
+    engine = state.cloneLagged ? "fast" : "authentic";
+  }
+  // Natural uses the Kokoro voice catalog; others use the Edge voice id.
+  const voiceId =
+    engine === "natural"
+      ? state.settings.kokoroVoice || DEFAULTS.kokoroVoice
+      : state.settings.voiceId || "auto";
   const started = Date.now();
   const res = await fetch("/api/speak", {
     method: "POST",
@@ -1418,10 +1465,10 @@ async function speakOneChunk(text, opts = {}) {
     body: JSON.stringify({
       text: line,
       personality: state.settings.tone || "friendly",
-      voice_id: state.settings.voiceId || "auto",
+      voice_id: voiceId,
       rate_bias: state.settings.voiceTempo || 0,
       pitch_bias: state.settings.voicePitch || 0,
-      force_edge: forceEdge,
+      engine: engine,
       preview: preview,
       max_chars: preview ? 160 : 520,
     }),
@@ -1432,7 +1479,8 @@ async function speakOneChunk(text, opts = {}) {
   }
   // In "auto" mode, if the clone was slow to synthesize this chunk, switch the
   // remainder of the reply to fast Edge so playback keeps up.
-  if (!forceEdge && engine === "auto" && Date.now() - started > CLONE_LAG_MS) {
+  if (choice === "auto" && engine === "authentic" &&
+      Date.now() - started > CLONE_LAG_MS) {
     state.cloneLagged = true;
   }
   const blob = await res.blob();
@@ -1994,6 +2042,9 @@ testVoiceBtn.addEventListener("click", async () => {
   state.settings.companionName =
     nameInput.value.trim() || state.settings.companionName;
   state.settings.voiceId = voiceIdInput ? voiceIdInput.value : state.settings.voiceId;
+  state.settings.kokoroVoice = kokoroVoiceInput
+    ? kokoroVoiceInput.value
+    : state.settings.kokoroVoice;
   state.settings.voiceEngine = voiceEngineInput
     ? voiceEngineInput.value
     : state.settings.voiceEngine;
@@ -2140,7 +2191,10 @@ settingsForm.addEventListener("submit", (e) => {
     tone: toneInput.value,
     speakReplies: speakInput.checked,
     voiceId: voiceIdInput ? voiceIdInput.value : "auto",
-    voiceEngine: voiceEngineInput ? voiceEngineInput.value : "auto",
+    kokoroVoice: kokoroVoiceInput
+      ? kokoroVoiceInput.value
+      : DEFAULTS.kokoroVoice,
+    voiceEngine: voiceEngineInput ? voiceEngineInput.value : "natural",
     voiceTempo: voiceTempoInput ? voiceTempoInput.value : 0,
     voicePitch: voicePitchInput ? voicePitchInput.value : 0,
     theme: themeSelect ? themeSelect.value : "auto",

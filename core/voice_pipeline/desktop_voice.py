@@ -79,10 +79,32 @@ _LOCAL_TTS_MODEL = os.environ.get(
     "SOUL_LOCAL_TTS_MODEL", "tts_models/en/ljspeech/tacotron2-DDC"
 )
 
+# Kokoro-82M — natural, low-latency, fully-offline neural TTS. Voices are
+# Apache-2.0 built-ins (no cloning). The id prefix encodes accent+gender:
+# a*=American, b*=British; *f*=female, *m*=male. lang_code is the first char.
+_KOKORO_SAMPLE_RATE = 24000
+_KOKORO_DEFAULT_VOICE = os.environ.get("SOUL_KOKORO_VOICE", "af_heart")
+_KOKORO_CATALOG = [
+    {"id": "af_heart", "label": "Heart (warm US female)"},
+    {"id": "af_bella", "label": "Bella (bright US female)"},
+    {"id": "af_nicole", "label": "Nicole (soft US female)"},
+    {"id": "am_michael", "label": "Michael (natural US male)"},
+    {"id": "am_puck", "label": "Puck (characterful US male)"},
+    {"id": "am_onyx", "label": "Onyx (deep US male)"},
+    {"id": "bf_emma", "label": "Emma (UK female)"},
+    {"id": "bm_george", "label": "George (mature UK male)"},
+    {"id": "bm_fable", "label": "Fable (cinematic UK male)"},
+]
+
 
 def voice_catalog() -> list:
     """Public list of Edge voices for Settings UI."""
     return list(_VOICE_CATALOG)
+
+
+def kokoro_voice_catalog() -> list:
+    """Public list of Kokoro voices for Settings UI."""
+    return list(_KOKORO_CATALOG)
 
 
 def prepare_speech_text(text: str) -> str:
@@ -408,6 +430,14 @@ def _probe_coqui() -> bool:
         return False
 
 
+def _probe_kokoro() -> bool:
+    try:
+        from kokoro import KPipeline  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def _probe_speech_recognition() -> bool:
     try:
         import speech_recognition  # noqa: F401
@@ -510,11 +540,15 @@ class DesktopVoiceService:
         self._recognizer = None
         self._coqui = None
         self._local_tts = None
+        self._kokoro = None
         self._whisper = None
         self._whisper_backend: Optional[str] = None
         self.whisper_model_name = whisper_model
         self._edge_available = _probe_edge_tts()
         self._pyttsx3_available = _probe_pyttsx3()
+        # Kokoro is light to probe (import only) and is the natural offline
+        # default for the PWA, so probe it even in light mode.
+        self._kokoro_available = _probe_kokoro()
         if light:
             # Fast path for PWA TTS API — skip heavy Coqui/Whisper/mic probes
             self._coqui_available = False
@@ -536,6 +570,7 @@ class DesktopVoiceService:
             self._edge_available
             or self._pyttsx3_available
             or self._coqui_available
+            or self._kokoro_available
         )
         # Defer mic probe — can hang for tens of seconds on some Windows setups
         self._mic_available = False
@@ -561,6 +596,11 @@ class DesktopVoiceService:
             self.tts_engine = "edge"
             self.initialized = True
             logger.info("Desktop voice TTS ready (edge-tts neural)")
+        elif self._kokoro_available:
+            # Natural offline default when Edge is unavailable — loads lazily.
+            self.tts_engine = "kokoro"
+            self.initialized = True
+            logger.info("Desktop voice TTS ready (Kokoro-82M, offline)")
         elif self._local_tts_available:
             # Offline neural default — model loads lazily on first synth.
             self.tts_engine = "local-neural"
@@ -594,6 +634,7 @@ class DesktopVoiceService:
             self._edge_available
             or self._pyttsx3_available
             or self._coqui_available
+            or self._kokoro_available
         )
         self.initialized = self.initialized or self._tts_available
         return self._tts_available or self._mic_available
@@ -696,6 +737,78 @@ class DesktopVoiceService:
                 out.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def _resolve_kokoro_voice(self, voice_id: Optional[str] = None) -> str:
+        """Map a requested voice id to a valid Kokoro voice, else the default."""
+        candidate = voice_id if voice_id is not None else self.voice_id
+        if candidate and str(candidate).lower() not in ("auto", "default", "tone"):
+            valid = {v["id"] for v in _KOKORO_CATALOG}
+            if str(candidate) in valid:
+                return str(candidate)
+        return _KOKORO_DEFAULT_VOICE
+
+    async def _ensure_kokoro(self) -> bool:
+        """Load the Kokoro KPipeline once (CUDA if available, else CPU)."""
+        if not self._kokoro_available:
+            return False
+        if self._kokoro is not None:
+            return True
+        try:
+            from kokoro import KPipeline
+
+            device = "cpu"
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    device = "cuda"
+            except Exception:
+                pass
+
+            # lang_code 'a' = American English; British voices (b*) still render
+            # acceptably. A single pipeline covers the full built-in catalog.
+            self._kokoro = await asyncio.to_thread(
+                KPipeline, lang_code="a", device=device
+            )
+            logger.info("Kokoro-82M ready (device=%s)", device)
+            return True
+        except Exception as e:
+            logger.warning("Kokoro init failed: %s", e)
+            self._kokoro = None
+            return False
+
+    async def _synth_kokoro_bytes(
+        self, text: str, voice_id: Optional[str] = None
+    ) -> Optional[bytes]:
+        """Render natural offline Kokoro TTS to 24k mono PCM16 WAV bytes."""
+        if not await self._ensure_kokoro():
+            return None
+        voice = self._resolve_kokoro_voice(voice_id)
+
+        def _run() -> Optional[bytes]:
+            import io
+
+            import numpy as np
+            import soundfile as sf
+
+            segments = [
+                audio
+                for _, _, audio in self._kokoro(
+                    text, voice=voice, split_pattern=r"(?<=[.!?])\s+"
+                )
+            ]
+            if not segments:
+                return None
+            wav = np.concatenate(segments)
+            buf = io.BytesIO()
+            sf.write(buf, wav, _KOKORO_SAMPLE_RATE, format="WAV", subtype="PCM_16")
+            return buf.getvalue()
+
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception as e:
+            logger.warning("Kokoro synth failed: %s", e)
+            return None
 
     async def _speak_local(self, text: str, personality: str) -> bool:
         """Speak via offline neural TTS (no network, no clone WAV)."""
@@ -856,8 +969,11 @@ class DesktopVoiceService:
             "pyttsx3_available": self._pyttsx3_available,
             "coqui_available": self._coqui_available,
             "local_tts_available": self._local_tts_available,
+            "kokoro_available": self._kokoro_available,
             "voice_id": self.voice_id or _EDGE_VOICES.get("friendly"),
             "voices": voice_catalog(),
+            "kokoro_voices": kokoro_voice_catalog(),
+            "kokoro_voice": _KOKORO_DEFAULT_VOICE,
             "rate_bias": self.rate_bias,
             "pitch_bias": self.pitch_bias,
             "clone_wav": self.clone_wav,
@@ -937,13 +1053,21 @@ class DesktopVoiceService:
         rate_bias: Optional[int] = None,
         pitch_bias: Optional[int] = None,
         force_edge: bool = False,
+        engine: Optional[str] = None,
         max_chars: int = 420,
     ) -> Optional[tuple[bytes, str]]:
         """Render TTS to bytes without playing (for PWA / API).
 
         Returns (audio_bytes, mime_type) or None.
-        Prefers XTTS clone when configured (unless force_edge), else Edge MP3,
-        else a local neural WAV (fully offline) before giving up.
+
+        ``engine`` selects the preferred path:
+          "natural"   -> Kokoro-82M (offline, natural) then fall back
+          "fast"      -> Edge neural (online) then fall back
+          "authentic" -> XTTS clone (needs a reference WAV) then fall back
+        When ``engine`` is None the legacy behavior applies (clone if
+        configured and not ``force_edge``, else Edge, else local neural).
+        ``voice_id`` is interpreted as a Kokoro voice for the natural engine
+        and as an Edge voice otherwise.
         """
         if not text or not text.strip():
             return None
@@ -954,20 +1078,30 @@ class DesktopVoiceService:
         if not spoken:
             return None
 
-        if (
-            not force_edge
-            and self.clone_wav
-            and self._coqui_available
-        ):
+        mode = (engine or "").strip().lower()
+        if not mode and force_edge:
+            mode = "fast"
+
+        # Natural (Kokoro) — natural + offline. Preferred mobile default.
+        if mode == "natural" and self._kokoro_available:
+            data = await self._synth_kokoro_bytes(spoken, voice_id=voice_id)
+            if data:
+                return data, "audio/wav"
+
+        # Authentic (XTTS clone) — explicit request or legacy default.
+        want_clone = mode == "authentic" or (mode == "" and not force_edge)
+        if want_clone and self.clone_wav and self._coqui_available:
             data = await self._synth_clone_bytes(spoken)
             if data:
                 return data, "audio/wav"
 
+        # Fast (Edge neural) — explicit fast/legacy edge path, or fallback.
+        edge_voice = voice_id if mode != "natural" else None
         if self._edge_available:
             data = await self._synth_edge_bytes(
                 spoken,
                 personality,
-                voice_id=voice_id,
+                voice_id=edge_voice,
                 rate=rate,
                 pitch=pitch,
                 rate_bias=rate_bias,
@@ -976,7 +1110,11 @@ class DesktopVoiceService:
             if data:
                 return data, "audio/mpeg"
 
-        # Offline neural fallback — no network, no reference WAV.
+        # Offline neural fallback — Kokoro first (natural), then local Coqui.
+        if self._kokoro_available:
+            data = await self._synth_kokoro_bytes(spoken, voice_id=voice_id)
+            if data:
+                return data, "audio/wav"
         if self._local_tts_available:
             data = await self._synth_local_bytes(spoken, personality)
             if data:

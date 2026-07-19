@@ -290,13 +290,20 @@
           <label>
             Voice engine
             <select id="voiceEngine" name="voiceEngine">
-              <option value="auto">Auto — your voice, fast fallback if it lags</option>
-              <option value="clone">Authentic (your cloned voice)</option>
+              <option value="natural">Natural (Kokoro — offline, fast)</option>
               <option value="fast">Fast (Jenny / Edge neural)</option>
+              <option value="authentic">Authentic (your cloned voice)</option>
+              <option value="auto">Auto — your voice, fast fallback if it lags</option>
             </select>
           </label>
           <label>
-            Voice
+            Natural voice (Kokoro)
+            <select id="kokoroVoice" name="kokoroVoice">
+              <option value="af_heart">Heart (warm US female)</option>
+            </select>
+          </label>
+          <label>
+            Voice (Fast / Edge)
             <select id="voiceId" name="voiceId">
               <option value="auto">Auto (match tone)</option>
             </select>

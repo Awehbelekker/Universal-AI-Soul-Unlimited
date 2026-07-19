@@ -29,6 +29,14 @@ nvidia-cuda-runtime-cu12
 #     ELEVENLABS_API_KEY=...   DEEPGRAM_API_KEY=...
 #   or VoiceConfig(elevenlabs_api_key=..., deepgram_api_key=...).
 
+# Natural offline neural TTS — Kokoro-82M (preferred natural/offline default):
+#   High-quality (MOS ~4.4), low-latency (~0.3s first audio on a modest GPU),
+#   fully offline once the 82M model + voices download on first use. Runs on
+#   CUDA when available, else CPU. 54 built-in Apache-2.0 voices (no cloning).
+#   Override the default voice with SOUL_KOKORO_VOICE (e.g. af_heart).
+kokoro>=0.9.4            # Kokoro-82M pipeline (pulls misaki + bundled espeak-ng)
+soundfile>=0.12.1        # write Kokoro float32 audio to WAV bytes
+
 # Offline neural TTS (zero-network default when edge-tts is unavailable):
 #   Uses the same coqui-tts package below with a local single-speaker model
 #   (tts_models/en/ljspeech/tacotron2-DDC by default). The model downloads once
