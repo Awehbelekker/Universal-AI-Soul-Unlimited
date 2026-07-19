@@ -89,11 +89,11 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 |------------|--------|-------|
 | Desktop Ollama chat + streaming | **Done** | `main_desktop.py` |
 | Adaptive routing (fast/standard/deep) | **Done** | `core/routing/` |
-| Session / MemGPT-style memory | **Partial** | Works for continuity; not full MemGPT product |
+| Session / MemGPT-style memory | **Partial** | Desktop MemGPT hooks + **shared PC session** for PWA (`core/memory/`) |
 | Personality modes (CLI) | **Partial** | Desktop CLI + PWA tone selector |
 | Companion display name | **Partial** | PWA Settings + desktop `name` / onboard; synced via `/api/profile` |
 | Values + onboarding | **Partial** | Wizard + persist; not full 15-question service |
-| Family coordination | **Missing** | Config / docs only |
+| Family coordination | **Partial** | Household context + members + reminders on PC (`core/family/`); multi-device PWA UI |
 
 ### ThinkMesh
 | Capability | Status | Notes |
@@ -107,7 +107,7 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 |------------|--------|-------|
 | STANDARD via Ollama (~3B) | **Done** | e.g. `llama3.2:3b` / Qwen |
 | Placeholder fallback without Ollama | **Done** | Degraded but pipeline runs |
-| LIGHT on-device (Android GGUF) | **Missing** | Strategy + heavy deps undecided |
+| LIGHT on-device (Android GGUF) | **Partial** | PWA **offline LIGHT pack** (cached/degraded); native GGUF still Missing |
 | ADVANCED / PREMIUM 20B | **Partial** | Scripts / guides; not default path |
 
 ### Voice
@@ -143,8 +143,10 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 | Capability | Status | Notes |
 |------------|--------|-------|
 | Local-first design | **Done** | Default posture |
-| AES-256 at rest | **Missing** | Flag / aspirational |
-| Encrypted cloud sync | **Missing** | Module scaffold at best |
+| AES-256 at rest | **Partial** | AES-256-GCM primitive (`thinkmesh_core/sync/encryption.py`); **opt-in** encryption for session memory (`core/memory/`) + audit log (`core/security/`). Profiles/household still plaintext |
+| Local audit trail | **Done** | Unified append-only trail (`core/security/audit_logger.py`) with privacy redaction + opt-in AES; wired to auth/config/automation |
+| Enterprise auth (JWT-style tokens) | **Partial** | Local-first HMAC-SHA256 tokens (`core/security/auth.py`); stdlib-only, no external IdP |
+| Encrypted cloud sync | **Partial** | Offline queue → PC drain on reconnect; full E2E crypto still Missing |
 | Export / delete profile | **Partial** | Profile files exist; no polished UX |
 
 ---
@@ -156,12 +158,17 @@ Legend: **Done** = usable in daily desktop flow · **Partial** = code/path exist
 3. ~~**Real CoAct slice**~~ — sandbox allowlist + consent + audit (expand as needed)  
 4. ~~**Android thin client**~~ — Settings + persisted LAN Ollama client (APK device proof still open)  
 5. ~~**ThinkMesh depth**~~ — multipass planner/critic/synth on deep routes + `think` CLI  
-6. **On-device LIGHT/STANDARD** — only after thin client is solid  
-7. **Overlay / OCR / sync / crypto** — after core companion loop is trusted  
-8. **APK device proof** — optional if PWA covers daily phone use  
-9. ~~**PWA phone proof**~~ — LAN chat + Settings confirmed on mobile
+6. **On-device LIGHT/STANDARD** — PWA offline LIGHT pack shipped; native Android GGUF still open  
+7. **Family organization** — Phase A–C on PC (context, members/PIN walls, reminders); mesh later  
+8. **Overlay / OCR / sync crypto** — after core companion loop is trusted  
+9. **APK device proof** — optional if PWA covers daily phone use  
+10. ~~**PWA phone proof**~~ — LAN chat + Settings confirmed on mobile
 
 ---
+
+## Doc trust
+
+See [docs/DOC_TRUST.md](docs/DOC_TRUST.md). Never treat `*_COMPLETE.md` as shipped fact.
 
 ## Non-goals (for now)
 

@@ -2,6 +2,7 @@
 
 **Last updated:** July 2026  
 **Product vision (end-state):** [VISION.md](VISION.md)  
+**Doc trust order:** [docs/DOC_TRUST.md](docs/DOC_TRUST.md)  
 **Canonical shipped state:** [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md) + [main.py](main.py) / [app_main.py](app_main.py)
 
 ---
@@ -11,11 +12,12 @@
 | Layer | ~Complete |
 |-------|-----------|
 | Core engine modules | 75% |
-| Desktop end-to-end | 70% |
+| Desktop end-to-end | 72% |
 | thinkmesh_core integration | 55% |
 | Android production app | 40% |
+| Multi-device / family / offline pack | 60% |
 | Tests / CI alignment | 50% |
-| **Ultimate Soul (vs VISION.md)** | **~45–55%** |
+| **Ultimate Soul (vs VISION.md)** | **~50–58%** |
 
 ---
 
@@ -27,31 +29,34 @@
 - Offline STT: **faster-whisper** preferred for `listen` / mic; Google recognition only as fallback
 - CoAct real slice: `automate list|read|open|note|append|mkdir|copy|delete|info` (sandbox, consent + audit)
 - Android thin client: Settings screen for Ollama URL/model, persist + Test connection (`app_main.py`)
-- **PWA thin client**: `web/` + `python scripts/serve_pwa.py` — **phone LAN proven**; **Speak replies** via PC Edge/XTTS (`/api/speak`)
-- ThinkMesh multipass: planner → critic → synthesizer on deep routes; CLI `think <question>`
-- `python smoke_test_ollama.py` / `python scripts/setup_ollama.py`
-- Benchmark suite under `benchmarks/`
-- GitHub Actions APK + benchmark workflows
-- ThinkMesh adapter wired to local `thinkmesh_core` orchestrator
+- **PWA thin client**: `web/` + `python scripts/serve_pwa.py` — phone LAN; Speak replies; wow tools; Google OAuth/Gmail
+- **Shared PC memory** (`core/memory/`) — phone + desktop chat continuity via `/api/memory` + `/api/chat`
+- **Phone deep route** — deep messages trigger ThinkMesh multipass on the PC before reply
+- **Family Phase A–C** (`core/family/`) — household context, members + PIN walls, board facts, reminders (PWA Family UI)
+- **Offline LIGHT pack** (`core/offline/`) — cached degraded replies + queue sync when LAN returns ([docs/OFFLINE_LIGHT.md](docs/OFFLINE_LIGHT.md))
+- **Security** (`core/security/`) — local-first audit trail (privacy redaction + opt-in AES), opt-in AES-256 at rest for session memory, and local HMAC-SHA256 JWT-style auth tokens
+- ThinkMesh multipass: planner → critic → synthesizer; CLI `think <question>`
+- `python scripts/smoke_roadmap.py` / other smokes under `scripts/`
 
 ## What does not work yet
 
-- On-device GGUF inference in Android APK (needs strategy decision + heavy deps)
-- Android 360° overlay (config only, no code)
-- Bundled PaddleOCR (runtime optional import in `core/automation/ocr_engine.py`)
-- Full personality/values assessment services (CLI/onboarding covers basics)
-- First XTTS model download (~2GB) on first clone — may take a while; CPML non-commercial terms apply
-- Broad CoAct / TerminalBench still largely simulated beyond sandbox file actions
-- AES-256 encryption (config flag only)
+- Native on-device GGUF LIGHT/STANDARD in Android APK (PWA offline pack is degraded only)
+- Android 360° overlay (config only)
+- Bundled PaddleOCR (optional import)
+- Full personality/values assessment service (basics + family context exist)
+- Full encrypted cloud sync — E2E crypto for the offline queue (queue sync is plaintext local). AES-256 at rest now exists opt-in for session memory + audit log, but not yet for profiles/household
+- Broad CoAct / TerminalBench beyond sandbox
+- Family “shared Soul mesh” (Phase D) across many people as one product
 
 Full Done / Partial / Missing map: [VISION.md](VISION.md#status-map-july-2026).
 
 ## Documentation disclaimer
 
-Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational**. Trust [VISION.md](VISION.md) for intent, this file for shipped reality, and runnable code over marketing docs.
+Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational**. Trust [VISION.md](VISION.md) for intent, this file for shipped reality, [docs/DOC_TRUST.md](docs/DOC_TRUST.md) for reading order, and runnable code over marketing docs.
 
 ## Next milestones
 
-1. Optional: APK build if native Android still desired (PWA covers daily phone use)
-2. Desktop daily-use polish (voice clone / values / memory) as you feel friction
-3. Optional: on-device models, overlay / OCR / sync / crypto
+1. Native Android LIGHT GGUF (optional if PWA+PC covers daily use)
+2. Extend AES at rest to profiles/household + E2E encrypted sync (opt-in AES already covers session memory + audit log)
+3. Family Phase D mesh only after A–C feel trusted daily
+4. Overlay / OCR after companion loop polish
