@@ -158,7 +158,7 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
     from core.voice_pipeline.desktop_voice import (
         greeting_speak_line,
         is_simple_greeting,
-        spoken_excerpt,
+        spoken_passage,
     )
 
     greet = is_simple_greeting(message)

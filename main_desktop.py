@@ -36,13 +36,22 @@ from core.engines.hrm_engine import HRMEngine
 from core.engines.coact_engine import CoAct1AutomationEngine
 from core.routing.task_router import classify_request
 
+# Force UTF-8 on the console so emoji in log messages don't crash the
+# StreamHandler on Windows (default cp1252). Guarded for streams that
+# don't support reconfigure (e.g. redirected/older runtimes).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError):
+        pass
+
 # Set up logging first
 Path("logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/universal_soul_ai.log'),
+        logging.FileHandler('logs/universal_soul_ai.log', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
