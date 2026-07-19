@@ -189,6 +189,35 @@ def append_audit(entry: Dict[str, Any]) -> None:
     entry.setdefault("id", str(uuid.uuid4()))
     with AUDIT_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    _mirror_to_security_audit(entry)
+
+
+def _mirror_to_security_audit(entry: Dict[str, Any]) -> None:
+    """Mirror an automation audit entry into the unified security trail.
+
+    Keeps the existing automation-specific log intact while giving the
+    system-wide audit a single 'automation' view. Guarded so a missing/broken
+    security package can never break automation.
+    """
+    try:
+        from core.security import log_event
+
+        target = entry.get("path") or entry.get("dest")
+        log_event(
+            str(entry.get("action") or "automation_action"),
+            category="automation",
+            actor=str(entry.get("source") or "coact"),
+            target=str(target) if target else None,
+            outcome="success" if entry.get("success") else "failure",
+            severity="info" if entry.get("success") else "warning",
+            detail={
+                "consent": bool(entry.get("consent")),
+                "description": entry.get("description"),
+                "error_message": entry.get("error_message"),
+            },
+        )
+    except Exception:
+        pass
 
 
 def read_audit(limit: int = 20) -> List[Dict[str, Any]]:
