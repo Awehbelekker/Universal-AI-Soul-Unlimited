@@ -34,6 +34,19 @@ Comprehensive benchmarking system for evaluating AI models using industry-standa
 - **Format**: Grade school level math word problems
 - **Metrics**: Accuracy, category performance, numeric extraction quality
 
+### 6. System Performance ✨ NEW
+- **Purpose**: Measure real runtime performance of a model (not accuracy)
+- **Metrics**: Latency p50/p95/p99, throughput (req/s), peak memory, avg CPU
+- **How**: Runs the actual inference function over prompts and samples real
+  CPU/memory via `psutil` — no simulated numbers
+- **Use**: Answers "how fast/efficient does this model run on this device?",
+  complementing the accuracy benchmarks above
+
+```bash
+# Run standalone (auto-detects local models + a running Ollama server)
+python benchmarks/run_system_performance.py
+```
+
 ## 🚀 Quick Start
 
 ### Install Dependencies
@@ -90,12 +103,15 @@ benchmarks/
 ├── arc_benchmark.py                   # ARC (Easy + Challenge) ✨ NEW
 ├── truthfulqa_benchmark.py            # TruthfulQA ✨ NEW
 ├── gsm8k_benchmark.py                 # Grade School Math ✨ NEW
+├── system_performance_benchmark.py    # Real latency/throughput/mem ✨ NEW
 ├── gpu_optimization.py                # GPU/memory optimization ✨ NEW
 ├── run_comprehensive_benchmarks.py    # All benchmarks, all models ✨ NEW
+├── run_system_performance.py          # System perf runner ✨ NEW
 ├── run_qwen_new_benchmarks.py         # New benchmarks on Qwen 3B ✨ NEW
 ├── run_qwen_benchmarks.py             # MMLU + HellaSwag on Qwen
 ├── run_baseline_benchmarks.py         # Original baseline runner
 ├── test_new_benchmarks.py             # Unit tests for new benchmarks
+├── test_system_performance.py         # Pytest for system perf ✨ NEW
 ├── README.md                          # This file
 ├── QWEN_RESULTS.md                    # Detailed Qwen 3B analysis
 ├── FINE_TUNING_GUIDE.md              # Fine-tuning strategies ✨ NEW

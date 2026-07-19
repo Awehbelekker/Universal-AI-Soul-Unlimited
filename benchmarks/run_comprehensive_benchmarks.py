@@ -22,6 +22,7 @@ from arc_benchmark import ARCBenchmark
 from truthfulqa_benchmark import TruthfulQABenchmark
 from gsm8k_benchmark import GSM8KBenchmark
 from gpu_optimization import GPUOptimizer
+from system_performance_benchmark import SystemPerformanceBenchmark
 
 # Import existing benchmarks
 try:
@@ -277,6 +278,24 @@ class ComprehensiveBenchmarkRunner:
             )
         }
         
+        # Run System Performance (real latency/throughput/memory/CPU)
+        logger.info("\n--- Running System Performance Benchmark ---")
+        sysperf = SystemPerformanceBenchmark()
+        sysperf_result = await sysperf.run_benchmark(
+            inference_fn,
+            model_name
+        )
+        results['benchmarks']['system_performance'] = {
+            'latency_p50_ms': sysperf_result.latency_p50_ms,
+            'latency_p95_ms': sysperf_result.latency_p95_ms,
+            'latency_p99_ms': sysperf_result.latency_p99_ms,
+            'avg_latency_ms': sysperf_result.avg_latency_ms,
+            'throughput_req_per_sec': sysperf_result.throughput_req_per_sec,
+            'peak_memory_mb': sysperf_result.peak_memory_mb,
+            'avg_cpu_percent': sysperf_result.avg_cpu_percent,
+            'num_errors': sysperf_result.num_errors,
+        }
+
         # Unload model to free memory
         logger.info(f"\nUnloading {model_name} from memory...")
         self.optimizer.unload_model(model_name)
@@ -352,11 +371,24 @@ class ComprehensiveBenchmarkRunner:
             benchmarks = model_data.get('benchmarks', {})
             
             for bench_name, bench_data in benchmarks.items():
+                # System performance has no accuracy; report perf metrics.
+                if bench_name == 'system_performance':
+                    print(
+                        f"{bench_name.upper():15} | "
+                        f"p95: {bench_data.get('latency_p95_ms', 0):6.1f}ms | "
+                        f"Throughput: "
+                        f"{bench_data.get('throughput_req_per_sec', 0):5.2f} "
+                        f"req/s | "
+                        f"Peak mem: "
+                        f"{bench_data.get('peak_memory_mb', 0):7.0f}MB"
+                    )
+                    continue
+
                 acc = bench_data.get('accuracy', 0)
                 correct = bench_data.get('num_correct', 0)
                 total = bench_data.get('num_questions', 0)
                 latency = bench_data.get('avg_latency_ms', 0)
-                
+
                 print(
                     f"{bench_name.upper():15} | "
                     f"Accuracy: {acc:5.1f}% ({correct:2}/{total:2}) | "
@@ -369,7 +401,10 @@ class ComprehensiveBenchmarkRunner:
 async def main():
     """Main entry point"""
     logger.info("Starting Comprehensive Qwen Benchmark Suite")
-    logger.info("Benchmarks: MMLU, HellaSwag, ARC, TruthfulQA, GSM8K")
+    logger.info(
+        "Benchmarks: MMLU, HellaSwag, ARC, TruthfulQA, GSM8K, "
+        "System Performance"
+    )
     
     # Create runner
     runner = ComprehensiveBenchmarkRunner(num_samples=50)
