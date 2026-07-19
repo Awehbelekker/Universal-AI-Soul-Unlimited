@@ -117,6 +117,7 @@ const state = {
   lastTools: [],
   lastAiBubble: null,
   speakGen: 0,
+  audioUnlocked: false,
   memberId: localStorage.getItem("usa_member_id") || "primary",
   online: navigator.onLine,
   offlinePack: null,
@@ -1325,6 +1326,47 @@ function splitSpeakChunks(text, maxLen = 480) {
   return chunks.length ? chunks : [clean.slice(0, maxLen)];
 }
 
+// Mobile browsers block audio.play() until the user interacts with the page.
+// Prime a tiny silent clip on the first gesture so later replies speak on their
+// own. Safe to call repeatedly; only the first successful play flips the flag.
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACIWAAACABAAZGF0YQAAAAA=";
+
+function unlockAudio() {
+  if (state.audioUnlocked) return;
+  try {
+    const a = new Audio(SILENT_WAV);
+    a.volume = 0;
+    const p = a.play();
+    if (p && typeof p.then === "function") {
+      p.then(() => {
+        state.audioUnlocked = true;
+      }).catch(() => {
+        /* still locked; will retry on next gesture */
+      });
+    } else {
+      state.audioUnlocked = true;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function initAudioUnlock() {
+  const events = ["pointerdown", "touchstart", "keydown", "click"];
+  const handler = () => {
+    unlockAudio();
+    if (state.audioUnlocked) {
+      events.forEach((ev) =>
+        document.removeEventListener(ev, handler, { capture: true })
+      );
+    }
+  };
+  events.forEach((ev) =>
+    document.addEventListener(ev, handler, { capture: true, passive: true })
+  );
+}
+
 function stopSpeakPlayback() {
   state.speakGen = (state.speakGen || 0) + 1;
   if (state.audio) {
@@ -1353,7 +1395,9 @@ async function speakOneChunk(text, opts = {}) {
       voice_id: state.settings.voiceId || "auto",
       rate_bias: state.settings.voiceTempo || 0,
       pitch_bias: state.settings.voicePitch || 0,
-      force_edge: true,
+      // Previews use fast Edge TTS; real replies let the PC use the XTTS
+      // clone (authentic timbre) when one is configured.
+      force_edge: preview,
       preview: preview,
       max_chars: preview ? 160 : 520,
     }),
@@ -1380,7 +1424,15 @@ async function speakOneChunk(text, opts = {}) {
       URL.revokeObjectURL(url);
       reject(new Error("Audio playback failed"));
     };
-    audio.play().catch(reject);
+    audio.play().catch((err) => {
+      URL.revokeObjectURL(url);
+      if (err && err.name === "NotAllowedError") {
+        state.audioUnlocked = false;
+        reject(new Error("tap the screen once to enable voice, then resend"));
+      } else {
+        reject(err);
+      }
+    });
   });
 }
 
@@ -2505,6 +2557,7 @@ if (joinCancel) {
 
 async function boot() {
   applyTheme(state.settings.theme);
+  initAudioUnlock();
   initSettingsTabs();
   initStarterChips();
   applyBrand();

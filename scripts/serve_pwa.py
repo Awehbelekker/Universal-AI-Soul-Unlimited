@@ -611,9 +611,10 @@ def synthesize_sync(
         hit = _tts_cache.get(key)
     if hit:
         data, mime = hit
+        cached_clone = mime == "audio/wav" and not force_edge
         return data, mime, {
-            "engine": "edge",
-            "cloning": False,
+            "engine": "xtts-clone" if cached_clone else "edge",
+            "cloning": cached_clone,
             "voice_id": voice_id,
             "cached": True,
         }
@@ -621,25 +622,30 @@ def synthesize_sync(
     async def _run():
         svc = get_voice_service()
         await svc.initialize(tts_only=True)
-        # Do not mutate shared service style from request params — pass through synthesize only
+        # Honor the caller's force_edge. Real replies pass force_edge=False so a
+        # configured XTTS clone is used (authentic timbre); previews force Edge
+        # for speed. Do not mutate shared service style from request params.
         result = await svc.synthesize(
             spoken,
             personality=personality,
             voice_id=voice_id,
             rate_bias=rate_bias if rate_bias is not None else 0,
             pitch_bias=pitch_bias if pitch_bias is not None else 0,
-            force_edge=True,  # PWA speak path is always Edge for speed/reliability
+            force_edge=force_edge,
             max_chars=max_chars,
         )
         st = svc.status()
+        cloning_active = bool(
+            not force_edge and st.get("clone_wav") and st.get("coqui_available")
+        )
         meta = {
-            "engine": "edge",
-            "cloning": False,
+            "engine": "xtts-clone" if cloning_active else "edge",
+            "cloning": cloning_active,
             "clone_wav": st.get("clone_wav"),
             "voice_id": voice_id or st.get("voice_id"),
             "rate_bias": rate_bias,
             "pitch_bias": pitch_bias,
-            "preview": True,
+            "preview": force_edge,
             "cached": False,
         }
         if result is None:
