@@ -1,5 +1,10 @@
 """
-Setup Coqui XTTS-v2 for local voice cloning.
+Setup Coqui TTS for local voice cloning + offline neural TTS.
+
+Installs the same stack for two features:
+  - Voice cloning (XTTS-v2 from a reference WAV), and
+  - The zero-network offline neural voice used as the default when edge-tts
+    is unavailable (a local single-speaker model — no reference WAV needed).
 
 Requires: NVIDIA GPU recommended (you have GTX 1080 Ti).
 Installs PyTorch (CUDA 11.8) + coqui-tts (maintained fork with Windows wheels).
@@ -76,6 +81,7 @@ def main() -> int:
         "from TTS.api import TTS; "
         "print('torch', torch.__version__, 'cuda', torch.cuda.is_available()); "
         "print('TTS import OK'); "
+        "print('Offline neural voice is now the zero-network TTS default.'); "
         "print('Next: in chat use  voice clone path\\\\to\\\\sample.wav'); "
         "print('Sample tip: 6-15s clean speech WAV, one speaker, no music.')"
     )

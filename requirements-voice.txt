@@ -29,7 +29,15 @@ nvidia-cuda-runtime-cu12
 #     ELEVENLABS_API_KEY=...   DEEPGRAM_API_KEY=...
 #   or VoiceConfig(elevenlabs_api_key=..., deepgram_api_key=...).
 
-# Voice cloning (heavy — use setup script):
+# Offline neural TTS (zero-network default when edge-tts is unavailable):
+#   Uses the same coqui-tts package below with a local single-speaker model
+#   (tts_models/en/ljspeech/tacotron2-DDC by default). The model downloads once
+#   on first use, then synthesis runs fully offline — no network, no reference
+#   WAV. Falls back to robotic pyttsx3 only if coqui-tts is absent. Override the
+#   model with SOUL_LOCAL_TTS_MODEL. Installing coqui-tts (below) enables both
+#   this offline neural voice and voice cloning.
+
+# Voice cloning + offline neural TTS (heavy — use setup script):
 #   python scripts/setup_voice_clone.py
 # Then: voice clone path/to/sample.wav
 # Use coqui-tts (not the deprecated TTS package — that needs MSVC on Windows).

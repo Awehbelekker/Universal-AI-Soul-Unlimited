@@ -339,6 +339,41 @@ we deliberately keep the boundary at the network interface.
 - `tests/test_cloud_providers.py` — 6 added tests (default localhost URL, env
   override, no-key requirement, server-down local fallback). No network.
 
+#### 2.1d Zero-dependency offline neural TTS ✅ DELIVERED (July 19, 2026)
+
+**Status:** Implemented and validated (7/7 new unit tests pass; 130/130 across
+the whole suite, 1 deselected pre-existing flaky live-LLM test).
+
+**Motivation:** The default desktop TTS path relied on **edge-tts** (Microsoft
+neural voices) which — while natural — requires a network connection. When
+offline (and no XTTS clone configured), the only fallback was robotic pyttsx3
+SAPI. This closes the last network dependency in the default voice path, per the
+zero-dependency-voice gap (Whisper + Coqui + Silero) and VISION §4/§7.
+
+**What shipped:**
+
+- `core/voice_pipeline/desktop_voice.py` — a **local single-speaker neural TTS**
+  tier inserted between edge-tts and pyttsx3. It reuses the existing
+  `CoquiTTSOptimizer` with a plain single-speaker model
+  (`tts_models/en/ljspeech/tacotron2-DDC`; override via `SOUL_LOCAL_TTS_MODEL`)
+  — **no reference WAV and no network** at synth time (model downloads once).
+  New TTS priority: XTTS clone → edge-tts → **local neural (offline)** → pyttsx3.
+- New members: `_local_tts` / `_local_tts_available`, lazy loader
+  `_ensure_local_tts()`, and `_synth_local_bytes()` (WAV) + `_speak_local()`.
+  Wired into both `synthesize()` (byte/PWA path) and `speak()` (playback path),
+  `initialize()` (reports `local-neural` when edge is absent), and `status()`
+  (adds `local_tts_available` + honest engine/note).
+- `requirements-voice.txt` + `scripts/setup_voice_clone.py` — document that the
+  same `coqui-tts` install now enables both cloning **and** the offline neural
+  default (no new heavy dependency beyond the existing coqui-tts + torch).
+- `tests/test_desktop_voice.py` (NEW) — 7 network-free tests (Coqui stubbed, no
+  model download): offline fallback selection, edge-wins priority, WAV output,
+  local-skip when unavailable, and honest `status()`/`initialize()` reporting.
+
+**Design note:** priority is preserved — edge-tts still wins when reachable; the
+local neural engine only activates offline / when edge is unavailable, and
+pyttsx3 remains the final zero-install fallback.
+
 **Original plan (rest of 2.1 below):**
 
 **Adopt from:** `universal-soul-ai/thinkmesh_core/voice/`

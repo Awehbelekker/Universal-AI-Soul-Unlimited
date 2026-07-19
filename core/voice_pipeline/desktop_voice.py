@@ -3,8 +3,9 @@ Desktop voice service — neural TTS preferred, optional XTTS cloning, mic STT.
 
 TTS priority:
   1. Coqui XTTS-v2 clone (if reference WAV set + TTS installed)
-  2. edge-tts (Microsoft neural voices — natural)
-  3. pyttsx3 (Windows SAPI — robotic fallback)
+  2. edge-tts (Microsoft neural voices — natural, needs network)
+  3. Local neural TTS (Coqui single-speaker, fully offline — zero network)
+  4. pyttsx3 (Windows SAPI — robotic fallback)
 
 STT priority:
   1. faster-whisper / openai-whisper (local offline)
@@ -69,6 +70,14 @@ _PERSONALITY_RATES = {
     "creative": 190,
     "analytical": 165,
 }
+
+# Local single-speaker neural TTS model (fully offline once downloaded — no
+# reference WAV and no network at synth time). Used as the high-quality offline
+# default when edge-tts is unavailable/offline and XTTS cloning isn't set up.
+# Override with the SOUL_LOCAL_TTS_MODEL env var.
+_LOCAL_TTS_MODEL = os.environ.get(
+    "SOUL_LOCAL_TTS_MODEL", "tts_models/en/ljspeech/tacotron2-DDC"
+)
 
 
 def voice_catalog() -> list:
@@ -500,6 +509,7 @@ class DesktopVoiceService:
         self._engine = None
         self._recognizer = None
         self._coqui = None
+        self._local_tts = None
         self._whisper = None
         self._whisper_backend: Optional[str] = None
         self.whisper_model_name = whisper_model
@@ -516,6 +526,9 @@ class DesktopVoiceService:
             self._faster_whisper_available = _probe_faster_whisper()
             self._openai_whisper_available = _probe_openai_whisper()
             self._stt_available = _probe_speech_recognition()
+        # Local neural TTS uses the same Coqui package; available whenever Coqui
+        # imports (no reference WAV needed, unlike XTTS cloning).
+        self._local_tts_available = self._coqui_available
         self._whisper_available = (
             self._faster_whisper_available or self._openai_whisper_available
         )
@@ -548,6 +561,11 @@ class DesktopVoiceService:
             self.tts_engine = "edge"
             self.initialized = True
             logger.info("Desktop voice TTS ready (edge-tts neural)")
+        elif self._local_tts_available:
+            # Offline neural default — model loads lazily on first synth.
+            self.tts_engine = "local-neural"
+            self.initialized = True
+            logger.info("Desktop voice TTS ready (local neural, offline)")
         elif self._pyttsx3_available:
             try:
                 import pyttsx3
@@ -612,6 +630,98 @@ class DesktopVoiceService:
         except Exception as e:
             logger.warning("XTTS init failed: %s", e)
             return False
+
+    async def _ensure_local_tts(self) -> bool:
+        """Load a local single-speaker neural model (offline, no reference WAV).
+
+        Reuses CoquiTTSOptimizer with a plain single-speaker model so no
+        speaker_wav is required at synth time. The model downloads once on
+        first use, then runs fully offline — the zero-network default.
+        """
+        if not self._local_tts_available:
+            return False
+        if self._local_tts and getattr(self._local_tts, "initialized", False):
+            return True
+        try:
+            if os.environ.get("COQUI_TOS_AGREED") is None:
+                os.environ["COQUI_TOS_AGREED"] = "1"
+
+            from core.engines.coqui_tts_optimizer import CoquiTTSOptimizer
+
+            use_gpu = False
+            try:
+                import torch
+
+                use_gpu = bool(torch.cuda.is_available())
+            except Exception:
+                pass
+
+            self._local_tts = CoquiTTSOptimizer(
+                model_name=_LOCAL_TTS_MODEL,
+                use_gpu=use_gpu,
+            )
+            ok = await self._local_tts.initialize()
+            if ok:
+                logger.info(
+                    "Local neural TTS ready (%s, gpu=%s)",
+                    _LOCAL_TTS_MODEL,
+                    use_gpu,
+                )
+            return ok
+        except Exception as e:
+            logger.warning("Local TTS init failed: %s", e)
+            return False
+
+    async def _synth_local_bytes(self, text: str, personality: str) -> Optional[bytes]:
+        """Render offline neural TTS to WAV bytes (no network, no clone WAV)."""
+        if not await self._ensure_local_tts():
+            return None
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        out = Path(tmp)
+        try:
+            audio = await self._local_tts.synthesize(
+                text=text,
+                personality=personality,
+                output_path=out,
+            )
+            if not audio and not out.is_file():
+                return None
+            return out.read_bytes()
+        except Exception as e:
+            logger.warning("Local TTS synth failed: %s", e)
+            return None
+        finally:
+            try:
+                out.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    async def _speak_local(self, text: str, personality: str) -> bool:
+        """Speak via offline neural TTS (no network, no clone WAV)."""
+        if not await self._ensure_local_tts():
+            return False
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        out = Path(tmp)
+        try:
+            audio = await self._local_tts.synthesize(
+                text=text,
+                personality=personality,
+                output_path=out,
+            )
+            if not audio and not out.is_file():
+                return False
+            await self._play_audio_file(str(out))
+            return True
+        except Exception as e:
+            logger.warning("Local TTS speak failed: %s", e)
+            return False
+        finally:
+            try:
+                out.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def set_clone_wav(self, path: str) -> str:
         """Register a reference WAV for cloning. Returns status message."""
@@ -718,18 +828,34 @@ class DesktopVoiceService:
         engine = self.tts_engine
         if cloning:
             engine = "xtts-clone"
+        elif not self._edge_available and self._local_tts_available:
+            # Offline neural default when Edge is unavailable.
+            engine = "local-neural"
         stt = None
         if self._mic_available:
             if self._whisper_available:
                 stt = f"whisper:{self.whisper_model_name}"
             else:
                 stt = "google"
+        if cloning:
+            note = f"Cloning from {self.clone_wav}"
+        elif self._edge_available:
+            note = "Neural Edge TTS active"
+        elif self._local_tts_available:
+            note = "Local neural TTS active (offline)"
+        else:
+            note = (
+                "Robotic pyttsx3 — install edge-tts for online neural voices, "
+                "or coqui-tts (python scripts/setup_voice_clone.py) for an "
+                "offline neural voice. For cloning: 'voice clone sample.wav'"
+            )
         return {
             "tts_available": self._tts_available,
             "tts_engine": engine if self._tts_available else None,
             "edge_available": self._edge_available,
             "pyttsx3_available": self._pyttsx3_available,
             "coqui_available": self._coqui_available,
+            "local_tts_available": self._local_tts_available,
             "voice_id": self.voice_id or _EDGE_VOICES.get("friendly"),
             "voices": voice_catalog(),
             "rate_bias": self.rate_bias,
@@ -742,17 +868,7 @@ class DesktopVoiceService:
             "mic_available": self._mic_available,
             "speak_replies": self.speak_replies,
             "initialized": self.initialized,
-            "note": (
-                f"Cloning from {self.clone_wav}"
-                if cloning
-                else (
-                    "Neural Edge TTS active"
-                    if self.tts_engine == "edge"
-                    else "Robotic pyttsx3 — install edge-tts. "
-                    "For cloning: python scripts/setup_voice_clone.py "
-                    "then 'voice clone sample.wav'"
-                )
-            ),
+            "note": note,
         }
 
     def apply_voice_style(
@@ -797,7 +913,13 @@ class DesktopVoiceService:
             ok = await self._speak_edge(spoken, personality)
             if ok:
                 return True
-            logger.warning("Edge TTS failed — trying pyttsx3 fallback")
+            logger.warning("Edge TTS failed — trying local neural fallback")
+
+        if self._local_tts_available:
+            ok = await self._speak_local(spoken, personality)
+            if ok:
+                return True
+            logger.warning("Local neural TTS failed — trying pyttsx3 fallback")
 
         if self._pyttsx3_available:
             return await self._speak_pyttsx3(spoken, personality)
@@ -820,7 +942,8 @@ class DesktopVoiceService:
         """Render TTS to bytes without playing (for PWA / API).
 
         Returns (audio_bytes, mime_type) or None.
-        Prefers XTTS clone when configured (unless force_edge), else Edge MP3.
+        Prefers XTTS clone when configured (unless force_edge), else Edge MP3,
+        else a local neural WAV (fully offline) before giving up.
         """
         if not text or not text.strip():
             return None
@@ -852,6 +975,12 @@ class DesktopVoiceService:
             )
             if data:
                 return data, "audio/mpeg"
+
+        # Offline neural fallback — no network, no reference WAV.
+        if self._local_tts_available:
+            data = await self._synth_local_bytes(spoken, personality)
+            if data:
+                return data, "audio/wav"
 
         return None
 
