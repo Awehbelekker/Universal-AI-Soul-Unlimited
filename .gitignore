@@ -91,3 +91,10 @@ data/android_settings.json
 # ThinkMesh local cache
 .thinkmesh_cache/
 
+# Secrets / local credentials
+.env
+
+# All runtime data (regenerable; may contain PINs, profiles, memories,
+# audit logs, OAuth tokens). Never commit anything under data/.
+data/
+
