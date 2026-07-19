@@ -32,8 +32,33 @@ _EDGE_VOICES = {
     "friendly": "en-US-JennyNeural",
     "energetic": "en-US-AriaNeural",
     "calm": "en-GB-SoniaNeural",
-    "creative": "en-US-AnaNeural",
+    "creative": "en-US-AvaNeural",
     "analytical": "en-US-ChristopherNeural",
+}
+
+# Curated neural voices for PWA / Settings (Edge TTS).
+_VOICE_CATALOG = [
+    {"id": "auto", "label": "Auto (match tone)"},
+    {"id": "en-US-EmmaMultilingualNeural", "label": "Emma (warm multilingual)"},
+    {"id": "en-US-JennyNeural", "label": "Jenny (friendly US)"},
+    {"id": "en-US-AriaNeural", "label": "Aria (expressive)"},
+    {"id": "en-US-AvaNeural", "label": "Ava (bright)"},
+    {"id": "en-US-AndrewNeural", "label": "Andrew (natural male)"},
+    {"id": "en-US-GuyNeural", "label": "Guy (professional)"},
+    {"id": "en-US-ChristopherNeural", "label": "Christopher (clear)"},
+    {"id": "en-GB-SoniaNeural", "label": "Sonia (calm UK)"},
+    {"id": "en-AU-NatashaNeural", "label": "Natasha (AU)"},
+    {"id": "en-ZA-LeahNeural", "label": "Leah (ZA)"},
+]
+
+# Edge-tts prosody: rate like "+5%", pitch like "+2Hz", volume like "+0%".
+_PERSONALITY_PROSODY = {
+    "professional": {"rate": "+0%", "pitch": "-2Hz", "volume": "+0%"},
+    "friendly": {"rate": "+3%", "pitch": "+0Hz", "volume": "+0%"},
+    "energetic": {"rate": "+12%", "pitch": "+4Hz", "volume": "+5%"},
+    "calm": {"rate": "-12%", "pitch": "-4Hz", "volume": "-5%"},
+    "creative": {"rate": "+6%", "pitch": "+2Hz", "volume": "+0%"},
+    "analytical": {"rate": "-5%", "pitch": "-3Hz", "volume": "+0%"},
 }
 
 _PERSONALITY_RATES = {
@@ -44,6 +69,310 @@ _PERSONALITY_RATES = {
     "creative": 190,
     "analytical": 165,
 }
+
+
+def voice_catalog() -> list:
+    """Public list of Edge voices for Settings UI."""
+    return list(_VOICE_CATALOG)
+
+
+def prepare_speech_text(text: str) -> str:
+    """Strip chat markup / tool dumps so neural TTS stays natural."""
+    import re
+
+    s = (text or "").strip()
+    if not s:
+        return ""
+    # Drop fenced code and inline code
+    s = re.sub(r"```[\s\S]*?```", " ", s)
+    s = re.sub(r"`([^`]+)`", r"\1", s)
+    # Drop leaked system / tool scaffolding (whole lines)
+    s = re.sub(
+        r"(?im)^(tool result|deep thinkmesh|shared memory|ground truth|"
+        r"you are |speak in a |prefer concise|"
+        r"you have pc-side tools|available tools:|"
+        r"do not invent|prefer tools for).*$",
+        " ",
+        s,
+    )
+    # Drop TOOL directives and JSON leftovers
+    s = re.sub(r"(?is)\bTOOL\s*:\s*\{.*?\}", " ", s)
+    s = re.sub(r"(?is)\{[^{}]{0,800}\}", " ", s)
+    s = re.sub(r"^\s*[\{\}\[\]\",]+\s*", " ", s)
+    s = re.sub(r"\*+([^*]+)\*+", r"\1", s)
+    s = re.sub(r"_+([^_]+)_+", r"\1", s)
+    s = re.sub(r"^#{1,6}\s*", "", s, flags=re.MULTILINE)
+    s = re.sub(r"^\s*[-*•]\s+", "", s, flags=re.MULTILINE)
+    # Never let URL / markup reach TTS (Edge otherwise reads "http slash slash…")
+    s = re.sub(r"(?is)<speak\b[^>]*>.*?</speak>", " ", s)
+    s = re.sub(r"(?is)</?(speak|voice|break|prosody|emphasis)\b[^>]*>", " ", s)
+    s = re.sub(r"https?://\S+", " ", s)
+    s = re.sub(r"\bwww\.\S+", " ", s)
+    s = re.sub(r"\b[\w.-]+\.(com|org|net|io|dev|ai|html?|php|aspx)\b\S*", " ", s, flags=re.I)
+    s = re.sub(r"\b[\w.+-]+@[\w.-]+\.\w+\b", " ", s)
+    s = re.sub(r"[⚙✅❌⚠→←↑↓★☆•\|]+", " ", s)
+    # Remove sentences that are clearly tool/prompt leakage
+    chunks = re.split(r"(?<=[.!?])\s+", s)
+    keep = []
+    bad = re.compile(
+        r"(?i)\b("
+        r"pc-side tools|available tools|tool result|web_search|"
+        r"ground truth|thinkmesh|num_predict|ollama|"
+        r"ending your reply with|exactly:\s*tool"
+        r")\b"
+    )
+    for c in chunks:
+        c = c.strip()
+        if not c or bad.search(c):
+            continue
+        keep.append(c)
+    s = " ".join(keep) if keep else ""
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip()
+
+
+def spoken_excerpt(text: str, max_chars: int = 220) -> str:
+    """Pick a short spoken line from a chat reply (never a doc dump)."""
+    import re
+
+    s = prepare_speech_text(text)
+    if not s:
+        return ""
+    # Reject filler / dump leftovers
+    if len(s) > 100 and not re.search(r"[.!?]", s):
+        return ""
+    if re.search(r"(.)\1{12,}", s):
+        s = re.sub(r"(.)\1{12,}", r"\1\1\1", s)
+    dumpish = (
+        s.count("\n") >= 4
+        or s.count("|") >= 3
+        or s.lower().startswith(("error:", "http", "get ", "post "))
+        or len(re.findall(r"\d+\.\s", s)) >= 3
+        or (len(s.split()) > 60 and s.count(".") < 2)
+    )
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", s) if p.strip()]
+    if not parts:
+        return clip_for_speech(s, max_chars=max_chars) if not dumpish else ""
+    # Always prefer a single clear sentence for voice
+    out = parts[0]
+    if (
+        not dumpish
+        and len(parts) > 1
+        and len(out) < 90
+        and len(out) + len(parts[1]) < max_chars
+    ):
+        out = f"{out} {parts[1]}"
+    out = clip_for_speech(out, max_chars=max_chars)
+    if len(out) > 40 and len(set(out.lower().split())) < 4:
+        return ""
+    # Reject leftover punctuation/JSON crumbs
+    if re.fullmatch(r"[\W\d_]{0,40}", out or ""):
+        return ""
+    return out
+
+
+def spoken_passage(text: str, max_chars: int = 480) -> str:
+    """Multi-sentence speakable version of a chat reply (reads most of what was written)."""
+    import re
+
+    s = prepare_speech_text(text)
+    if not s:
+        return ""
+    max_chars = max(120, int(max_chars))
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", s) if p.strip()]
+    if not parts:
+        return clip_for_speech(s, max_chars=max_chars)
+    kept: list[str] = []
+    total = 0
+    for part in parts:
+        add = len(part) + (1 if kept else 0)
+        if kept and total + add > max_chars:
+            break
+        kept.append(part)
+        total += add
+        if len(kept) >= 10:
+            break
+    if not kept:
+        return clip_for_speech(parts[0], max_chars=max_chars)
+    return clip_for_speech(" ".join(kept), max_chars=max_chars)
+
+
+def speech_for_tts(text: str, max_chars: int = 420) -> str:
+    """Pick excerpt vs multi-sentence passage based on speak budget."""
+    max_chars = max(60, int(max_chars))
+    if max_chars >= 280:
+        return spoken_passage(text, max_chars=max_chars)
+    return spoken_excerpt(text, max_chars=max_chars)
+
+
+_GREETING_RE = None
+
+
+def is_simple_greeting(message: str) -> bool:
+    import re
+
+    global _GREETING_RE
+    if _GREETING_RE is None:
+        _GREETING_RE = re.compile(
+            r"^\s*(hi|hii+|hello|hey|yo|howdy|good\s*(morning|afternoon|evening)|"
+            r"sup|hiya|heya)([\s,.!?]|$)",
+            re.I,
+        )
+    return bool(_GREETING_RE.match((message or "").strip()))
+
+
+def greeting_speak_line(companion: str = "Soul") -> str:
+    name = (companion or "Soul").strip() or "Soul"
+    return f"Hey, I'm {name}. Good to hear from you."
+
+
+def clip_for_speech(text: str, max_chars: int = 420) -> str:
+    """Keep spoken replies short so voice stays snappy (chat shows full text)."""
+    import re
+
+    s = prepare_speech_text(text)
+    if not s:
+        return ""
+    max_chars = max(60, int(max_chars))
+    if len(s) <= max_chars:
+        return s
+    cut = s[:max_chars]
+    m = list(re.finditer(r"[.!?]\s", cut))
+    if m and m[-1].end() > max_chars * 0.4:
+        cut = cut[: m[-1].end()].strip()
+    else:
+        sp = cut.rfind(" ")
+        if sp > max_chars * 0.45:
+            cut = cut[:sp].strip()
+        cut = cut.rstrip(",;:-") + "…"
+    return cut
+
+
+def detect_speech_emotion(text: str) -> str:
+    """Lightweight cue from reply text → excited | warm | serious | gentle | neutral."""
+    import re
+
+    t = (text or "").lower()
+    if not t:
+        return "neutral"
+    bangs = t.count("!")
+    if bangs >= 2 or re.search(
+        r"\b(amazing|awesome|congrats|congratulations|woohoo|excited|fantastic)\b",
+        t,
+    ):
+        return "excited"
+    if re.search(r"\b(sorry|unfortunately|careful|warning|important|serious)\b", t):
+        return "serious"
+    if re.search(r"\b(gentle|softly|breathe|calm|peace|rest|quiet)\b", t):
+        return "gentle"
+    if re.search(
+        r"\b(love|glad|happy|warm|care|here for you|proud of you)\b", t
+    ) or ("?" in t and bangs == 0):
+        return "warm"
+    return "neutral"
+
+
+_EMOTION_BIAS = {
+    "excited": {"rate": 8, "pitch": 3},
+    "warm": {"rate": 0, "pitch": 1},
+    "serious": {"rate": -4, "pitch": -2},
+    "gentle": {"rate": -6, "pitch": -1},
+    "neutral": {"rate": 0, "pitch": 0},
+}
+
+
+def _xml_escape(s: str) -> str:
+    return (
+        s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def text_to_edge_ssml(text: str, voice: str) -> str:
+    """Wrap multi-sentence speech in SSML with short breath breaks.
+
+    Short lines stay plain (caller should skip SSML) — breaks only when useful.
+    """
+    import re
+
+    clean = prepare_speech_text(text)
+    if not clean:
+        return ""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", clean) if p.strip()]
+    if len(parts) <= 1:
+        return ""  # signal: use plain text
+    chunks: list[str] = []
+    for i, part in enumerate(parts):
+        chunks.append(_xml_escape(part))
+        if i < len(parts) - 1:
+            ms = 280 if part.endswith(("!", "?")) else 200
+            chunks.append(f'<break time="{ms}ms"/>')
+    body = " ".join(chunks)
+    return (
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+        'xml:lang="en-US">'
+        f'<voice name="{_xml_escape(voice)}">{body}</voice></speak>'
+    )
+
+
+def _clamp_rate(pct: int) -> str:
+    pct = max(-50, min(100, int(pct)))
+    return f"{pct:+d}%"
+
+
+def _clamp_pitch(hz: int) -> str:
+    hz = max(-50, min(50, int(hz)))
+    return f"{hz:+d}Hz"
+
+
+def _clamp_volume(pct: int) -> str:
+    pct = max(-50, min(50, int(pct)))
+    return f"{pct:+d}%"
+
+
+def resolve_prosody(
+    personality: str = "friendly",
+    *,
+    rate: Optional[str] = None,
+    pitch: Optional[str] = None,
+    volume: Optional[str] = None,
+    rate_bias: Optional[int] = None,
+    pitch_bias: Optional[int] = None,
+    emotion: Optional[str] = None,
+) -> Dict[str, str]:
+    """Merge personality defaults with optional overrides / slider / emotion biases."""
+    base = dict(
+        _PERSONALITY_PROSODY.get(personality, _PERSONALITY_PROSODY["friendly"])
+    )
+    emo = _EMOTION_BIAS.get(emotion or "neutral", _EMOTION_BIAS["neutral"])
+    rb = int(rate_bias or 0) + int(emo.get("rate", 0))
+    pb = int(pitch_bias or 0) + int(emo.get("pitch", 0))
+    apply_rate = rate is not None or rate_bias is not None or bool(emo.get("rate"))
+    apply_pitch = pitch is not None or pitch_bias is not None or bool(emo.get("pitch"))
+
+    if rate:
+        base["rate"] = rate if str(rate).endswith("%") else _clamp_rate(int(rate))
+    elif apply_rate:
+        try:
+            cur = int(str(base["rate"]).replace("%", "").replace("+", "") or "0")
+        except ValueError:
+            cur = 0
+        base["rate"] = _clamp_rate(cur + rb)
+    if pitch:
+        p = str(pitch)
+        base["pitch"] = p if p.endswith("Hz") else _clamp_pitch(int(p))
+    elif apply_pitch:
+        try:
+            cur = int(str(base["pitch"]).replace("Hz", "").replace("+", "") or "0")
+        except ValueError:
+            cur = 0
+        base["pitch"] = _clamp_pitch(cur + pb)
+    if volume:
+        v = str(volume)
+        base["volume"] = v if v.endswith("%") else _clamp_volume(int(v))
+    return base
 
 
 def _probe_edge_tts() -> bool:
@@ -206,6 +535,10 @@ class DesktopVoiceService:
         self.voice_id: Optional[str] = None
         self.clone_wav: Optional[str] = None
         self.clone_language: str = "en"
+        # Slider biases (added on top of personality prosody). None = pure tone map.
+        self.rate_bias: int = 0
+        self.pitch_bias: int = 0
+        self.volume_override: Optional[str] = None
 
     async def initialize(self, *, tts_only: bool = False) -> bool:
         if self.initialized:
@@ -398,6 +731,9 @@ class DesktopVoiceService:
             "pyttsx3_available": self._pyttsx3_available,
             "coqui_available": self._coqui_available,
             "voice_id": self.voice_id or _EDGE_VOICES.get("friendly"),
+            "voices": voice_catalog(),
+            "rate_bias": self.rate_bias,
+            "pitch_bias": self.pitch_bias,
             "clone_wav": self.clone_wav,
             "cloning": cloning,
             "stt_available": self._stt_available,
@@ -419,6 +755,25 @@ class DesktopVoiceService:
             ),
         }
 
+    def apply_voice_style(
+        self,
+        *,
+        voice_id: Optional[str] = None,
+        rate_bias: Optional[int] = None,
+        pitch_bias: Optional[int] = None,
+    ) -> None:
+        """Update Edge voice + tempo/pitch biases from Settings."""
+        if voice_id is not None:
+            vid = (voice_id or "").strip()
+            if not vid or vid.lower() in ("auto", "default", "tone"):
+                self.voice_id = None
+            else:
+                self.voice_id = vid
+        if rate_bias is not None:
+            self.rate_bias = max(-40, min(40, int(rate_bias)))
+        if pitch_bias is not None:
+            self.pitch_bias = max(-20, min(20, int(pitch_bias)))
+
     async def speak(self, text: str, personality: str = "friendly") -> bool:
         """Speak text aloud using best available TTS."""
         if not text or not text.strip():
@@ -428,9 +783,9 @@ class DesktopVoiceService:
         if not self.initialized:
             await self.initialize()
 
-        spoken = text.strip()
-        if len(spoken) > 1200:
-            spoken = spoken[:1197] + "..."
+        spoken = spoken_excerpt(text, max_chars=280)
+        if not spoken:
+            return False
 
         if self.clone_wav and self._coqui_available:
             ok = await self._speak_clone(spoken)
@@ -450,29 +805,51 @@ class DesktopVoiceService:
         return False
 
     async def synthesize(
-        self, text: str, personality: str = "friendly"
+        self,
+        text: str,
+        personality: str = "friendly",
+        *,
+        voice_id: Optional[str] = None,
+        rate: Optional[str] = None,
+        pitch: Optional[str] = None,
+        rate_bias: Optional[int] = None,
+        pitch_bias: Optional[int] = None,
+        force_edge: bool = False,
+        max_chars: int = 420,
     ) -> Optional[tuple[bytes, str]]:
         """Render TTS to bytes without playing (for PWA / API).
 
         Returns (audio_bytes, mime_type) or None.
-        Prefers XTTS clone when configured, else Edge MP3.
+        Prefers XTTS clone when configured (unless force_edge), else Edge MP3.
         """
         if not text or not text.strip():
             return None
         if not self.initialized:
             await self.initialize(tts_only=True)
 
-        spoken = text.strip()
-        if len(spoken) > 1200:
-            spoken = spoken[:1197] + "..."
+        spoken = speech_for_tts(text, max_chars=max_chars)
+        if not spoken:
+            return None
 
-        if self.clone_wav and self._coqui_available:
+        if (
+            not force_edge
+            and self.clone_wav
+            and self._coqui_available
+        ):
             data = await self._synth_clone_bytes(spoken)
             if data:
                 return data, "audio/wav"
 
         if self._edge_available:
-            data = await self._synth_edge_bytes(spoken, personality)
+            data = await self._synth_edge_bytes(
+                spoken,
+                personality,
+                voice_id=voice_id,
+                rate=rate,
+                pitch=pitch,
+                rate_bias=rate_bias,
+                pitch_bias=pitch_bias,
+            )
             if data:
                 return data, "audio/mpeg"
 
@@ -504,32 +881,81 @@ class DesktopVoiceService:
             except OSError:
                 pass
 
+    def _resolve_edge_voice(
+        self, personality: str, voice_id: Optional[str] = None
+    ) -> str:
+        override = voice_id if voice_id is not None else self.voice_id
+        if override and str(override).lower() not in ("auto", "default", "tone"):
+            return str(override)
+        return _EDGE_VOICES.get(personality, _EDGE_VOICES["friendly"])
+
     async def _synth_edge_bytes(
-        self, text: str, personality: str
+        self,
+        text: str,
+        personality: str,
+        *,
+        voice_id: Optional[str] = None,
+        rate: Optional[str] = None,
+        pitch: Optional[str] = None,
+        rate_bias: Optional[int] = None,
+        pitch_bias: Optional[int] = None,
     ) -> Optional[bytes]:
         import edge_tts
 
-        voice = self.voice_id or _EDGE_VOICES.get(
-            personality, _EDGE_VOICES["friendly"]
+        voice = self._resolve_edge_voice(personality, voice_id)
+        rb = self.rate_bias if rate_bias is None else rate_bias
+        pb = self.pitch_bias if pitch_bias is None else pitch_bias
+        # Always plain text — never SSML. Passing SSML + rate/pitch to edge-tts
+        # often makes the engine literally speak xmlns="http://www.w3.org/…"
+        plain = prepare_speech_text(text) or (text or "").strip()
+        if not plain:
+            return None
+        if len(plain) > 560:
+            plain = spoken_passage(plain, max_chars=520) or plain[:520]
+        if "<" in plain or "xmlns" in plain.lower() or "http://" in plain.lower():
+            import re
+
+            plain = prepare_speech_text(re.sub(r"<[^>]+>", " ", plain))
+            if not plain:
+                return None
+        emotion = detect_speech_emotion(plain)
+        prosody = resolve_prosody(
+            personality,
+            rate=rate,
+            pitch=pitch,
+            volume=self.volume_override,
+            rate_bias=rb,
+            pitch_bias=pb,
+            emotion=emotion,
         )
-        rate = {
-            "energetic": "+15%",
-            "calm": "-10%",
-            "professional": "+0%",
-            "friendly": "+5%",
-            "creative": "+8%",
-            "analytical": "-5%",
-        }.get(personality, "+0%")
 
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
         try:
-            communicate = edge_tts.Communicate(text, voice, rate=rate)
+            communicate = edge_tts.Communicate(
+                plain,
+                voice,
+                rate=prosody["rate"],
+                pitch=prosody["pitch"],
+                volume=prosody["volume"],
+            )
             await communicate.save(path)
             return Path(path).read_bytes()
         except Exception as e:
             logger.warning("Edge TTS synth failed: %s", e)
-            return None
+            try:
+                communicate = edge_tts.Communicate(
+                    plain,
+                    voice,
+                    rate="+5%",
+                    pitch="+0Hz",
+                    volume="+0%",
+                )
+                await communicate.save(path)
+                return Path(path).read_bytes()
+            except Exception as e2:
+                logger.warning("Edge TTS plain fallback failed: %s", e2)
+                return None
         finally:
             try:
                 os.unlink(path)
@@ -566,22 +992,29 @@ class DesktopVoiceService:
     async def _speak_edge(self, text: str, personality: str) -> bool:
         import edge_tts
 
-        voice = self.voice_id or _EDGE_VOICES.get(
-            personality, _EDGE_VOICES["friendly"]
+        voice = self._resolve_edge_voice(personality)
+        plain = prepare_speech_text(text) or spoken_excerpt(text, max_chars=280)
+        if not plain:
+            return False
+        # Desktop speaker: plain text only (same SSML-vs-prosody trap as synth)
+        prosody = resolve_prosody(
+            personality,
+            volume=self.volume_override,
+            rate_bias=self.rate_bias,
+            pitch_bias=self.pitch_bias,
+            emotion="neutral",
         )
-        rate = {
-            "energetic": "+15%",
-            "calm": "-10%",
-            "professional": "+0%",
-            "friendly": "+5%",
-            "creative": "+8%",
-            "analytical": "-5%",
-        }.get(personality, "+0%")
 
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
         try:
-            communicate = edge_tts.Communicate(text, voice, rate=rate)
+            communicate = edge_tts.Communicate(
+                plain,
+                voice,
+                rate=prosody["rate"],
+                pitch=prosody["pitch"],
+                volume=prosody["volume"],
+            )
             await communicate.save(path)
             await self._play_audio_file(path)
             return True
@@ -767,6 +1200,44 @@ class DesktopVoiceService:
             if self._ensure_whisper(force_cpu=True):
                 return self._run_whisper_transcribe(path)
         return None
+
+    def transcribe_bytes(
+        self, raw: bytes, suffix: str = ".webm"
+    ) -> Optional[str]:
+        """Transcribe an uploaded voice note (webm/wav/mp3/…) via Whisper."""
+        if not raw or len(raw) < 500:
+            return None
+        suf = suffix if suffix.startswith(".") else f".{suffix}"
+        if suf.lower() not in (
+            ".wav",
+            ".mp3",
+            ".webm",
+            ".ogg",
+            ".m4a",
+            ".flac",
+            ".mp4",
+        ):
+            suf = ".webm"
+        # Enable whisper probes even if constructed with light=True
+        if not self._whisper_available:
+            self._faster_whisper_available = _probe_faster_whisper()
+            self._openai_whisper_available = _probe_openai_whisper()
+            self._whisper_available = (
+                self._faster_whisper_available or self._openai_whisper_available
+            )
+        if not self._whisper_available:
+            return None
+        fd, tmp = tempfile.mkstemp(suffix=suf)
+        os.close(fd)
+        path = Path(tmp)
+        try:
+            path.write_bytes(raw)
+            return self._transcribe_wav_path(str(path))
+        finally:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     async def listen_once(
         self,

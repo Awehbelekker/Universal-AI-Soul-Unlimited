@@ -1,10 +1,22 @@
 """
 Phase 2 Optimization Integration Guide
 TensorRT, NNAPI, and Advanced Acceleration
+
+Detection honesty (DOC_TRUST): accelerator availability is *probed*, not assumed.
+TensorRT is only reported when the ``tensorrt`` Python package or the ``trtexec``
+binary is actually present (previously it was assumed whenever CUDA existed).
+NNAPI is only reported on a genuine Android runtime (ABI/env markers), not merely
+because ``/proc/version`` mentions "android". The ``optimize_for_*`` methods
+remain integration stubs — they describe the pipeline and return expected metrics
+but do not perform real on-device conversion, which requires the platform build
+toolchains (TensorRT SDK / Android NDK) unavailable in this desktop environment.
 """
 
-from typing import Dict
+from typing import Dict, Any
 import logging
+import os
+import shutil
+import subprocess
 from enum import Enum
 import platform
 
@@ -36,6 +48,9 @@ class Phase2Optimizer:
     """
 
     def __init__(self):
+        # Probe details (version strings / markers) filled in during detection.
+        self.tensorrt_version: str = ""
+        self.nnapi_marker: str = ""
         self.available_accelerators = self._detect_accelerators()
         self.active_accelerator = self._select_best_accelerator()
 
@@ -43,8 +58,56 @@ class Phase2Optimizer:
         logger.info(f"Available: {list(self.available_accelerators.keys())}")
         logger.info(f"Active: {self.active_accelerator}")
 
+    @staticmethod
+    def _detect_tensorrt() -> tuple:
+        """Probe for a real TensorRT install (does NOT assume CUDA == TensorRT).
+
+        Returns (available, version_or_marker). Checks, in order, the ``tensorrt``
+        Python package, then the ``trtexec`` CLI on PATH. Never raises.
+        """
+        try:
+            import tensorrt as trt  # type: ignore
+            ver = getattr(trt, "__version__", "unknown")
+            logger.info("TensorRT detected (python package %s)", ver)
+            return True, f"python:{ver}"
+        except Exception:
+            pass
+        trtexec = shutil.which("trtexec")
+        if trtexec:
+            logger.info("TensorRT detected (trtexec at %s)", trtexec)
+            return True, f"trtexec:{trtexec}"
+        logger.info("TensorRT not detected (no tensorrt package or trtexec)")
+        return False, ""
+
+    @staticmethod
+    def _detect_nnapi() -> tuple:
+        """Probe for a genuine Android runtime that exposes NNAPI. Never raises.
+
+        Uses robust Android markers (the ``ANDROID_*`` env vars set by the
+        runtime, or an ``android``/``libc`` signature in ``/proc/version``)
+        rather than a substring match alone, so a Linux desktop is not misreported
+        as NNAPI-capable. Returns (available, marker).
+        """
+        if platform.system() != "Linux":
+            return False, ""
+        # Android runtimes export these; desktop Linux does not.
+        for env_var in ("ANDROID_ROOT", "ANDROID_DATA", "ANDROID_STORAGE"):
+            if os.environ.get(env_var):
+                logger.info("NNAPI: Android runtime marker %s present", env_var)
+                return True, f"env:{env_var}"
+        try:
+            with open("/proc/version", "r") as f:
+                content = f.read().lower()
+            # Require an Android-specific toolchain signature, not just the word.
+            if "android" in content and ("libc" in content or "aarch64" in content):
+                logger.info("NNAPI: Android /proc/version signature present")
+                return True, "proc_version"
+        except Exception:
+            pass
+        return False, ""
+
     def _detect_accelerators(self) -> Dict[str, bool]:
-        """Detect available hardware accelerators"""
+        """Detect available hardware accelerators (probed, not assumed)."""
         accelerators = {}
 
         # CPU always available
@@ -55,10 +118,15 @@ class Phase2Optimizer:
             import torch
             if torch.cuda.is_available():
                 accelerators[AcceleratorType.CUDA.value] = True
-                accelerators[AcceleratorType.TENSORRT.value] = True
                 logger.info(f"CUDA available: {torch.cuda.get_device_name(0)}")
         except ImportError:
             pass
+
+        # Check TensorRT independently — CUDA alone does NOT imply TensorRT.
+        trt_available, trt_marker = self._detect_tensorrt()
+        if trt_available:
+            accelerators[AcceleratorType.TENSORRT.value] = True
+            self.tensorrt_version = trt_marker
 
         # Check ROCm (AMD)
         try:
@@ -80,23 +148,45 @@ class Phase2Optimizer:
             except Exception:
                 pass
 
-        # Check NNAPI (Android)
-        if platform.system() == 'Linux':
-            try:
-                # Check if running on Android
-                with open('/proc/version', 'r') as f:
-                    if 'android' in f.read().lower():
-                        accelerators[AcceleratorType.NNAPI.value] = True
-            except Exception:
-                pass
+        # Check NNAPI (genuine Android runtime only)
+        nnapi_available, nnapi_marker = self._detect_nnapi()
+        if nnapi_available:
+            accelerators[AcceleratorType.NNAPI.value] = True
+            self.nnapi_marker = nnapi_marker
 
-        # Check OpenVINO (Intel)
+        # Check OpenVINO (Intel) — only when the runtime is actually importable.
         try:
+            import openvino  # type: ignore  # noqa: F401
             accelerators[AcceleratorType.OPENVINO.value] = True
-        except ImportError:
+        except Exception:
             pass
 
         return accelerators
+
+    def get_capabilities(self) -> Dict[str, Any]:
+        """Return a structured, honest snapshot of detected accelerators.
+
+        Unlike the mock ``optimize_for_*`` results, this reflects what was
+        actually probed on this machine (availability + version/marker), so
+        callers can gate real work on genuine capability.
+        """
+        return {
+            "platform": platform.system(),
+            "active_accelerator": self.active_accelerator,
+            "available": dict(self.available_accelerators),
+            "tensorrt": {
+                "available": self.available_accelerators.get(
+                    AcceleratorType.TENSORRT.value, False
+                ),
+                "detail": self.tensorrt_version,
+            },
+            "nnapi": {
+                "available": self.available_accelerators.get(
+                    AcceleratorType.NNAPI.value, False
+                ),
+                "detail": self.nnapi_marker,
+            },
+        }
 
     def _select_best_accelerator(self) -> str:
         """Select best available accelerator"""
@@ -118,9 +208,14 @@ class Phase2Optimizer:
 
         return AcceleratorType.CPU.value
 
-    def optimize_for_tensorrt(self, model_path: str) -> Dict[str]:
+    def optimize_for_tensorrt(self, model_path: str) -> Dict[str, Any]:
         """
         Optimize model with TensorRT
+
+        NOTE (stub): this describes the pipeline and returns the *expected*
+        metrics; it does not run a real TensorRT build (that needs the TensorRT
+        SDK + an ONNX export, unavailable here). The result carries
+        ``'stub': True`` so callers can tell mock results from real ones.
 
         Benefits:
         - 3-10x faster inference on NVIDIA GPUs
@@ -154,6 +249,7 @@ class Phase2Optimizer:
 
             return {
                 'status': 'optimized',
+                'stub': True,
                 'accelerator': 'tensorrt',
                 'expected_speedup': '3-10x',
                 'precision': 'FP16',
@@ -168,9 +264,13 @@ class Phase2Optimizer:
             logger.error(f"TensorRT optimization failed: {e}")
             return {'error': str(e)}
 
-    def optimize_for_nnapi(self, model_path: str) -> Dict[str]:
+    def optimize_for_nnapi(self, model_path: str) -> Dict[str, Any]:
         """
         Optimize model for Android NNAPI
+
+        NOTE (stub): describes the pipeline and returns *expected* metrics; it
+        does not run a real TFLite conversion / NNAPI delegation (that needs the
+        Android NDK + an on-device runtime). The result carries ``'stub': True``.
 
         Benefits:
         - 2-3x faster on Android devices
@@ -203,6 +303,7 @@ class Phase2Optimizer:
 
             return {
                 'status': 'optimized',
+                'stub': True,
                 'accelerator': 'nnapi',
                 'expected_speedup': '2-3x',
                 'format': 'tflite',
@@ -218,7 +319,7 @@ class Phase2Optimizer:
             logger.error(f"NNAPI optimization failed: {e}")
             return {'error': str(e)}
 
-    def optimize_for_coreml(self, model_path: str) -> Dict[str]:
+    def optimize_for_coreml(self, model_path: str) -> Dict[str, Any]:
         """
         Optimize model for Apple CoreML
 
@@ -268,7 +369,7 @@ class Phase2Optimizer:
             logger.error(f"CoreML optimization failed: {e}")
             return {'error': str(e)}
 
-    def enable_dynamic_batching(self, max_batch_size: int = 8) -> Dict[str]:
+    def enable_dynamic_batching(self, max_batch_size: int = 8) -> Dict[str, Any]:
         """
         Enable dynamic batching for multiple requests
 
@@ -299,7 +400,7 @@ class Phase2Optimizer:
             ]
         }
 
-    def get_optimization_recommendations(self) -> Dict[str]:
+    def get_optimization_recommendations(self) -> Dict[str, Any]:
         """Get optimization recommendations based on hardware"""
         recommendations = {
             'platform': platform.system(),

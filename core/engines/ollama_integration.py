@@ -29,6 +29,40 @@ from ..config import Config
 
 logger = logging.getLogger(__name__)
 
+# Repo root (…/Universal-AI-Soul-Unlimited) for the direct-load fallback below.
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _detect_runtime_options() -> Dict[str, int]:
+    """Compute hardware-aware Ollama options via RuntimeOptimizer.
+
+    Returns an options dict like ``{"num_ctx", "num_gpu", "num_thread"}`` tuned
+    to the local machine, or an empty dict if the optimizer is unavailable (in
+    which case Ollama's own defaults apply). Never raises.
+    """
+    try:
+        from thinkmesh_core.localai.runtime_optimizer import RuntimeOptimizer
+    except Exception:
+        # The top-level thinkmesh_core package has a pre-existing eager-import
+        # error; fall back to loading the optimizer module directly by path.
+        try:
+            import importlib.util
+            import sys as _sys
+
+            ro_path = _ROOT / "thinkmesh_core" / "localai" / "runtime_optimizer.py"
+            spec = importlib.util.spec_from_file_location("_ollama_ro", ro_path)
+            mod = importlib.util.module_from_spec(spec)
+            _sys.modules["_ollama_ro"] = mod
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
+            RuntimeOptimizer = mod.RuntimeOptimizer
+        except Exception:
+            return {}
+    try:
+        return RuntimeOptimizer().recommend_params().as_options()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug("RuntimeOptimizer unavailable, using Ollama defaults: %s", e)
+        return {}
+
 
 def _model_available(models: List[Dict[str, Any]], model_name: str) -> bool:
     """Match Ollama model tags (exact or name without tag)."""
@@ -64,7 +98,8 @@ class OllamaIntegration:
         self,
         config: Optional[Config] = None,
         base_url: str = "http://localhost:11434",
-        model_name: str = "qwen2.5:3b"
+        model_name: str = "qwen2.5:3b",
+        auto_optimize: bool = True
     ):
         """
         Initialize Ollama integration.
@@ -73,12 +108,27 @@ class OllamaIntegration:
             config: Configuration object
             base_url: Ollama server URL (default: localhost:11434)
             model_name: Model to use for inference
+            auto_optimize: Auto-apply hardware-aware runtime options
+                (num_ctx/num_gpu/num_thread) detected via RuntimeOptimizer.
+                Explicit per-call kwargs always override these. Disable to
+                fall back to Ollama's built-in defaults.
         """
         self.config = config or Config()
         self.base_url = base_url
         self.model_name = model_name
         self.client = httpx.AsyncClient(timeout=60.0)
         self.model_loaded = False
+
+        # Hardware-aware runtime options merged as a base layer into every
+        # request; per-call kwargs take precedence over these.
+        self.auto_optimize = auto_optimize
+        self.runtime_options: Dict[str, int] = (
+            _detect_runtime_options() if auto_optimize else {}
+        )
+        if self.runtime_options:
+            logger.info(
+                "Auto-optimized Ollama runtime options: %s", self.runtime_options
+            )
 
         logger.info(f"Initialized Ollama integration with model: {model_name}")
 
@@ -175,15 +225,18 @@ class OllamaIntegration:
         start_time = datetime.now()
 
         try:
+            # Start from hardware-aware base options; explicit args/kwargs win.
+            options: Dict[str, Any] = dict(self.runtime_options)
+            options.update({
+                "num_predict": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+            })
             request_data = {
                 "model": self.model_name,
                 "prompt": prompt,
                 "stream": False,
-                "options": {
-                    "num_predict": max_tokens,
-                    "temperature": temperature,
-                    "top_p": top_p,
-                }
+                "options": options,
             }
 
             if stop_sequences:
@@ -260,15 +313,18 @@ class OllamaIntegration:
         if not self.model_loaded:
             await self.initialize()
 
+        # Start from hardware-aware base options; explicit args/kwargs win.
+        options: Dict[str, Any] = dict(self.runtime_options)
+        options.update({
+            "num_predict": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        })
         request_data = {
             "model": self.model_name,
             "prompt": prompt,
             "stream": True,
-            "options": {
-                "num_predict": max_tokens,
-                "temperature": temperature,
-                "top_p": top_p,
-            },
+            "options": options,
         }
 
         if stop_sequences:

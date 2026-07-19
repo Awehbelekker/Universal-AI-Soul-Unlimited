@@ -9,6 +9,26 @@ from .model_optimizer import (
     OptimizationType
 )
 
+try:
+    from .runtime_optimizer import (
+        RuntimeOptimizer,
+        RuntimeParams,
+        HardwareProfile,
+        ThermalState,
+        MODEL_TIERS,
+    )
+    _RUNTIME_EXPORTS = [
+        'RuntimeOptimizer', 'RuntimeParams', 'HardwareProfile',
+        'ThermalState', 'MODEL_TIERS',
+    ]
+except Exception:  # pragma: no cover - defensive import guard
+    RuntimeOptimizer = None  # type: ignore
+    RuntimeParams = None  # type: ignore
+    HardwareProfile = None  # type: ignore
+    ThermalState = None  # type: ignore
+    MODEL_TIERS = {}  # type: ignore
+    _RUNTIME_EXPORTS = []
+
 __all__ = [
     'LocalModelManager',
     'ModelSize',
@@ -16,4 +36,4 @@ __all__ = [
     'get_optimizer',
     'QuantizationLevel',
     'OptimizationType'
-]
+] + _RUNTIME_EXPORTS
