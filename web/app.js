@@ -1440,8 +1440,8 @@ async function speakOneChunk(text, opts = {}) {
   const audio = new Audio(url);
   audio._objUrl = url;
   state.audio = audio;
-  const engine = res.headers.get("X-Soul-TTS-Engine") || "tts";
-  setMode(`${companionLabel()} · speaking (${engine})`);
+  const respEngine = res.headers.get("X-Soul-TTS-Engine") || "tts";
+  setMode(`${companionLabel()} · speaking (${respEngine})`);
   setSpeakingBubble(true);
   await new Promise((resolve, reject) => {
     audio.onended = () => {
