@@ -30,7 +30,7 @@ Today’s stack includes:
 | Model weights | Not in repo — download via Ollama |
 | ThinkMesh / real CoAct / overlay / OCR / AES | Partial or not implemented — see [VISION.md](VISION.md) |
 
-For honest scope see [VISION.md](VISION.md), [PROJECT_STATUS.md](PROJECT_STATUS.md), and [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md).
+For honest scope see [VISION.md](VISION.md), [PROJECT_STATUS.md](PROJECT_STATUS.md), [docs/DOC_TRUST.md](docs/DOC_TRUST.md), and [BETA_VERSION_INFO.md](BETA_VERSION_INFO.md).
 
 ---
 
