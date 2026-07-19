@@ -10,8 +10,18 @@ const DEFAULTS = {
   voiceId: "auto",
   voiceTempo: 0,
   voicePitch: 0,
+  // Voice engine for spoken replies:
+  //  "auto"  - authentic XTTS clone, but fall back to fast Edge if it lags
+  //  "clone" - always the authentic clone (may be slow)
+  //  "fast"  - always fast Edge neural (Jenny), never the clone
+  voiceEngine: "auto",
   theme: "auto",
 };
+
+const VOICE_ENGINES = ["auto", "clone", "fast"];
+// If a clone chunk takes longer than this, "auto" mode drops to fast Edge for
+// the rest of the reply so speech stays responsive.
+const CLONE_LAG_MS = 12000;
 
 const TONE_HINTS = {
   friendly: "warm, supportive, conversational",
@@ -55,6 +65,9 @@ function loadSettings() {
         DEFAULTS.companionName,
       tone: TONE_HINTS[tone] ? tone : DEFAULTS.tone,
       voiceId: (data.voiceId || DEFAULTS.voiceId).trim() || DEFAULTS.voiceId,
+      voiceEngine: VOICE_ENGINES.includes(data.voiceEngine)
+        ? data.voiceEngine
+        : DEFAULTS.voiceEngine,
       voiceTempo: clampInt(data.voiceTempo, -20, 20, DEFAULTS.voiceTempo),
       voicePitch: clampInt(data.voicePitch, -10, 10, DEFAULTS.voicePitch),
       theme: ["auto", "dark", "light"].includes(data.theme)
@@ -83,6 +96,9 @@ function saveSettings(settings) {
       DEFAULTS.companionName,
     tone: TONE_HINTS[tone] ? tone : DEFAULTS.tone,
     voiceId: (settings.voiceId || DEFAULTS.voiceId).trim() || DEFAULTS.voiceId,
+    voiceEngine: VOICE_ENGINES.includes(settings.voiceEngine)
+      ? settings.voiceEngine
+      : DEFAULTS.voiceEngine,
     voiceTempo: clampInt(settings.voiceTempo, -20, 20, DEFAULTS.voiceTempo),
     voicePitch: clampInt(settings.voicePitch, -10, 10, DEFAULTS.voicePitch),
     theme: ["auto", "dark", "light"].includes(settings.theme)
@@ -154,6 +170,7 @@ const toneInput = document.getElementById("tone");
 const speakInput = document.getElementById("speakReplies");
 const voiceLine = document.getElementById("voiceLine");
 const voiceIdInput = document.getElementById("voiceId");
+const voiceEngineInput = document.getElementById("voiceEngine");
 const voiceTempoInput = document.getElementById("voiceTempo");
 const voicePitchInput = document.getElementById("voicePitch");
 const tempoVal = document.getElementById("tempoVal");
@@ -628,6 +645,8 @@ function fillSettingsForm() {
   toneInput.value = state.settings.tone;
   speakInput.checked = !!state.settings.speakReplies;
   if (voiceIdInput) voiceIdInput.value = state.settings.voiceId || "auto";
+  if (voiceEngineInput)
+    voiceEngineInput.value = state.settings.voiceEngine || "auto";
   if (voiceTempoInput) {
     voiceTempoInput.value = String(state.settings.voiceTempo || 0);
     if (tempoVal) tempoVal.textContent = voiceTempoInput.value;
@@ -1386,6 +1405,13 @@ async function speakOneChunk(text, opts = {}) {
   const preview = !!opts.preview;
   const line = cleanSpeakText(text);
   if (!line || /xmlns|www\.w3\.org/i.test(line)) return;
+  // Decide the engine. Previews are always fast Edge. For real replies the
+  // user's voiceEngine choice applies; in "auto" mode a lagging clone chunk
+  // trips state.cloneLagged so the rest of the reply uses fast Edge.
+  const engine = state.settings.voiceEngine || "auto";
+  let forceEdge = preview || engine === "fast";
+  if (!forceEdge && engine === "auto" && state.cloneLagged) forceEdge = true;
+  const started = Date.now();
   const res = await fetch("/api/speak", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1395,9 +1421,7 @@ async function speakOneChunk(text, opts = {}) {
       voice_id: state.settings.voiceId || "auto",
       rate_bias: state.settings.voiceTempo || 0,
       pitch_bias: state.settings.voicePitch || 0,
-      // Previews use fast Edge TTS; real replies let the PC use the XTTS
-      // clone (authentic timbre) when one is configured.
-      force_edge: preview,
+      force_edge: forceEdge,
       preview: preview,
       max_chars: preview ? 160 : 520,
     }),
@@ -1405,6 +1429,11 @@ async function speakOneChunk(text, opts = {}) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  // In "auto" mode, if the clone was slow to synthesize this chunk, switch the
+  // remainder of the reply to fast Edge so playback keeps up.
+  if (!forceEdge && engine === "auto" && Date.now() - started > CLONE_LAG_MS) {
+    state.cloneLagged = true;
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -1441,6 +1470,8 @@ async function speak(text, opts = {}) {
   const preview = !!opts.preview;
   const line = cleanSpeakText(text);
   if (!line || /xmlns|www\.w3\.org/i.test(line)) return;
+  // Reset per-reply lag tracking; "auto" mode may set this mid-reply.
+  if (!preview) state.cloneLagged = false;
   stopSpeakPlayback();
   const gen = state.speakGen;
   const chunks = splitSpeakChunks(line, preview ? 160 : 480);
@@ -1963,6 +1994,9 @@ testVoiceBtn.addEventListener("click", async () => {
   state.settings.companionName =
     nameInput.value.trim() || state.settings.companionName;
   state.settings.voiceId = voiceIdInput ? voiceIdInput.value : state.settings.voiceId;
+  state.settings.voiceEngine = voiceEngineInput
+    ? voiceEngineInput.value
+    : state.settings.voiceEngine;
   state.settings.voiceTempo = voiceTempoInput
     ? Number(voiceTempoInput.value)
     : state.settings.voiceTempo;
@@ -2106,6 +2140,7 @@ settingsForm.addEventListener("submit", (e) => {
     tone: toneInput.value,
     speakReplies: speakInput.checked,
     voiceId: voiceIdInput ? voiceIdInput.value : "auto",
+    voiceEngine: voiceEngineInput ? voiceEngineInput.value : "auto",
     voiceTempo: voiceTempoInput ? voiceTempoInput.value : 0,
     voicePitch: voicePitchInput ? voicePitchInput.value : 0,
     theme: themeSelect ? themeSelect.value : "auto",
