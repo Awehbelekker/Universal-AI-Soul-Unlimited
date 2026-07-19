@@ -9,6 +9,12 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <title>Universal Soul AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap"
+    rel="stylesheet"
+  />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -16,68 +22,478 @@
     <header class="top">
       <div class="brand">
         <span class="mark" aria-hidden="true"></span>
-        <div>
+        <div class="brand-text">
           <h1 id="brandName">Universal Soul</h1>
-          <p id="modeLine" class="sub">Thin client</p>
+          <p id="modeLine" class="sub">Ready</p>
         </div>
       </div>
-      <button type="button" id="settingsBtn" class="ghost" aria-label="Settings">Settings</button>
+      <button type="button" id="menuBtn" class="icon-btn menu-btn" aria-label="Open menu" title="Menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
     </header>
 
-    <main id="chat" class="chat" aria-live="polite"></main>
+    <div id="statusStrip" class="status-strip" hidden>
+      <span class="status-strip-dot" aria-hidden="true"></span>
+      <span id="statusStripText">Ready</span>
+    </div>
+
+    <div class="toast-stack" id="toastStack">
+      <div id="googleBanner" class="google-banner" hidden>
+        <div class="google-banner-text">
+          <strong id="googleBannerTitle">Link Google</strong>
+          <span id="googleBannerHint">Sign in → approve permissions → auto-linked</span>
+        </div>
+        <div class="google-banner-actions">
+          <button type="button" id="googleBannerBtn" class="google-btn">Sign in with Google</button>
+          <button type="button" id="googleBannerDismiss" class="icon-btn ghost banner-dismiss" aria-label="Dismiss">×</button>
+        </div>
+      </div>
+
+      <div id="offlineBanner" class="offline-banner" hidden>
+        <strong>Limited offline mode</strong>
+        <span>No PC brain on LAN — using cached LIGHT pack. Messages queue for sync.</span>
+      </div>
+    </div>
+
+    <main id="chat" class="chat" aria-live="polite">
+      <div id="chatEmpty" class="chat-empty">
+        <p class="chat-empty-title">
+          Say hello to <span id="emptyName">Universal Soul</span>
+        </p>
+        <p class="hint">Private companion on your LAN — voice, memory, family.</p>
+        <div id="starterChips" class="starter-chips" aria-label="Suggested prompts">
+          <button type="button" data-prompt="Hi">Hi</button>
+          <button type="button" data-prompt="What's the weather in London?">Weather</button>
+          <button type="button" data-prompt="Remind me at 6pm to call home">Remind me</button>
+          <button type="button" data-prompt="Draft a short friendly email">Draft email</button>
+        </div>
+      </div>
+    </main>
+
+    <div id="toolChips" class="tool-chips" aria-label="Quick tools"></div>
 
     <form id="composer" class="composer" autocomplete="off">
-      <input id="message" type="text" placeholder="Message…" enterkeyhint="send" required />
-      <button type="submit" id="sendBtn">Send</button>
+      <button type="button" id="chatMicBtn" class="icon-btn ghost mic-btn" aria-label="Voice note" title="Tap to talk">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <input id="message" type="text" placeholder="Message…" enterkeyhint="send" />
+      <button type="button" id="chatNoteBtn" class="icon-btn ghost mic-btn" aria-label="Attach voice memo" title="Attach voice memo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M14 3v5h5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button type="submit" id="sendBtn" class="icon-btn send-btn" aria-label="Send" title="Send">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 19V5M12 5l-5 5M12 5l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <input id="chatNoteFile" type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.aac" hidden />
     </form>
+  </div>
+
+  <dialog id="menuDialog">
+    <div class="menu-sheet">
+      <h2>Menu</h2>
+      <p class="hint">Switch member, manage household, or open settings.</p>
+      <label class="menu-member">
+        Who’s talking
+        <select id="memberSelect" aria-label="Household member"></select>
+      </label>
+      <div class="menu-actions">
+        <button type="button" id="menuFamilyBtn" class="menu-item">Family &amp; household</button>
+        <button type="button" id="menuInviteBtn" class="menu-item">Invite device (QR)</button>
+        <button type="button" id="menuSettingsBtn" class="menu-item">Settings</button>
+      </div>
+      <button type="button" id="menuCloseBtn" class="ghost menu-close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- First-login onboarding -->
+  <div id="onboard" class="onboard" hidden>
+    <div class="onboard-card">
+      <p class="onboard-step" id="onboardStepLabel">Step 1 of 4</p>
+      <h2 id="onboardTitle">Welcome</h2>
+      <p class="hint" id="onboardHint">Your companion on this phone talks to the PC brain on your LAN.</p>
+
+      <div id="onboardPaneWelcome" class="onboard-pane">
+        <p class="hint">
+          First login: name your Soul, optionally link Google (permissions),
+          then invite siblings or staff with a QR code.
+        </p>
+      </div>
+
+      <div id="onboardPaneName" class="onboard-pane" hidden>
+        <label>
+          Companion name
+          <input id="onboardName" maxlength="40" placeholder="e.g. Aria, Soul" />
+        </label>
+        <label>
+          Tone
+          <select id="onboardTone">
+            <option value="friendly">Friendly</option>
+            <option value="calm">Calm</option>
+            <option value="professional">Professional</option>
+            <option value="energetic">Energetic</option>
+            <option value="creative">Creative</option>
+            <option value="analytical">Analytical</option>
+          </select>
+        </label>
+        <label>
+          Household name
+          <input id="onboardHouse" maxlength="80" placeholder="Our household" />
+        </label>
+      </div>
+
+      <div id="onboardPaneGoogle" class="onboard-pane" hidden>
+        <p class="hint">
+          Link Google so Soul can draft/send mail with your consent.
+          You’ll sign in and approve permissions on Google’s screen.
+        </p>
+        <div id="onboardGoogleSetup" class="google-setup">
+          <label>
+            Client ID
+            <input id="onboardClientId" autocomplete="off" placeholder="….apps.googleusercontent.com" />
+          </label>
+          <label>
+            Client Secret
+            <input id="onboardClientSecret" type="password" autocomplete="off" placeholder="GOCSPX-…" />
+          </label>
+          <button type="button" id="onboardSaveCreds" class="primary-btn">Save keys</button>
+        </div>
+        <button type="button" id="onboardGoogleBtn" class="google-btn">Sign in with Google</button>
+        <p id="onboardGoogleStatus" class="status" role="status"></p>
+        <button type="button" id="onboardGoogleSkip" class="ghost">Skip for now</button>
+      </div>
+
+      <div id="onboardPaneInvite" class="onboard-pane" hidden>
+        <p class="hint">
+          Invite a sibling or staff to link their phone. They scan this QR
+          (same Wi‑Fi / PC URL) and join the household.
+        </p>
+        <label>
+          Invite as
+          <select id="onboardInviteRole">
+            <option value="sibling">Sibling</option>
+            <option value="partner">Partner</option>
+            <option value="child">Child</option>
+            <option value="parent">Parent</option>
+            <option value="other">Staff / other</option>
+          </select>
+        </label>
+        <label>
+          Name hint (optional)
+          <input id="onboardInviteHint" placeholder="Alex" />
+        </label>
+        <button type="button" id="onboardMakeInvite" class="primary-btn">Generate QR invite</button>
+        <div id="onboardQrBox" class="qr-box" hidden>
+          <img id="onboardQrImg" alt="Invite QR code" width="200" height="200" />
+          <p class="hint mono" id="onboardInviteUrl"></p>
+          <div class="share-row">
+            <button type="button" id="onboardCopyInvite" class="ghost">Copy link</button>
+            <button type="button" id="onboardWhatsApp" class="share-wa">WhatsApp</button>
+            <button type="button" id="onboardShare" class="ghost">Share (AirDrop / …)</button>
+          </div>
+          <p class="hint">
+            On iPhone: Share opens AirDrop, Messages, WhatsApp. On Android: WhatsApp or system share.
+          </p>
+        </div>
+      </div>
+
+      <div class="onboard-nav">
+        <button type="button" id="onboardBack" class="ghost" hidden>Back</button>
+        <button type="button" id="onboardNext" class="primary-btn">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Join via QR / invite link -->
+  <div id="joinInvite" class="onboard" hidden>
+    <div class="onboard-card">
+      <h2>Link this device</h2>
+      <p class="hint" id="joinHint">You’ve been invited to the household.</p>
+      <label>
+        Your name
+        <input id="joinName" maxlength="40" placeholder="Your name" required />
+      </label>
+      <label>
+        Optional PIN (privacy wall)
+        <input id="joinPin" type="password" maxlength="12" autocomplete="off" />
+      </label>
+      <p id="joinStatus" class="status" role="status"></p>
+      <div class="onboard-nav">
+        <button type="button" id="joinCancel" class="ghost">Cancel</button>
+        <button type="button" id="joinSubmit" class="primary-btn">Join household</button>
+      </div>
+    </div>
   </div>
 
   <dialog id="settingsDialog">
     <form method="dialog" id="settingsForm" class="settings">
-      <h2>Companion &amp; connection</h2>
-      <p class="hint">
-        Name and tone shape how they talk. Voice is synthesized on your PC
-        (Edge neural, or your XTTS clone if set on desktop).
-      </p>
+      <div class="settings-head">
+        <h2>Settings</h2>
+        <nav class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button type="button" role="tab" data-tab="companion" aria-selected="true">Companion</button>
+          <button type="button" role="tab" data-tab="voice">Voice</button>
+          <button type="button" role="tab" data-tab="connection">Connection</button>
+          <button type="button" role="tab" data-tab="household">Household</button>
+        </nav>
+      </div>
+
+      <div class="settings-body">
+        <div class="settings-panel" data-panel="companion">
+          <p class="hint">Name and tone shape how they talk on this device.</p>
+          <label>
+            Companion name
+            <input id="companionName" name="companionName" placeholder="e.g. Aria, Soul, Nova" maxlength="40" />
+          </label>
+          <label>
+            Tone
+            <select id="tone" name="tone">
+              <option value="friendly">Friendly</option>
+              <option value="professional">Professional</option>
+              <option value="calm">Calm</option>
+              <option value="energetic">Energetic</option>
+              <option value="creative">Creative</option>
+              <option value="analytical">Analytical</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="speakReplies" name="speakReplies" type="checkbox" />
+            Speak replies (PC voice)
+          </label>
+          <label>
+            Appearance
+            <select id="themeSelect" name="theme">
+              <option value="auto">Auto (system)</option>
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
+          <p id="voiceLine" class="hint"></p>
+          <div class="row">
+            <button type="button" id="testVoiceBtn" class="ghost">Test voice</button>
+            <button type="button" id="clearChatBtn" class="ghost">Clear chat</button>
+          </div>
+        </div>
+
+        <div class="settings-panel" data-panel="voice" hidden>
+          <p class="hint">
+            Tone sets a base feel. Tempo / pitch fine-tune Edge neural speech.
+            For a <b>real person’s voice</b>, clone on the PC (below).
+          </p>
+          <label>
+            Voice
+            <select id="voiceId" name="voiceId">
+              <option value="auto">Auto (match tone)</option>
+            </select>
+          </label>
+          <label>
+            Tempo <span id="tempoVal" class="range-val">0</span>
+            <input id="voiceTempo" name="voiceTempo" type="range" min="-20" max="20" step="1" value="0" />
+          </label>
+          <label>
+            Pitch <span id="pitchVal" class="range-val">0</span>
+            <input id="voicePitch" name="voicePitch" type="range" min="-10" max="10" step="1" value="0" />
+          </label>
+          <h3 class="section-title">Voice clone (real timbre)</h3>
+          <p class="hint">
+            Record 6–15s on this phone (or upload a voice note). One speaker, quiet room,
+            consent required. Needs Coqui on the PC:
+            <code>python scripts/setup_voice_clone.py</code>.
+          </p>
+          <div class="row clone-record-row">
+            <button type="button" id="cloneRecordBtn" class="primary-btn">Record voice note</button>
+            <span id="cloneRecordTimer" class="range-val" aria-live="polite"></span>
+          </div>
+          <audio id="clonePreview" controls hidden class="clone-preview"></audio>
+          <label>
+            Or upload file / voice memo
+            <input id="cloneFile" type="file" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm" />
+          </label>
+          <div class="row">
+            <button type="button" id="cloneUploadBtn" class="ghost">Use file</button>
+            <button type="button" id="cloneDemoBtn" class="ghost">Demo sample</button>
+            <button type="button" id="cloneClearBtn" class="ghost">Clear clone</button>
+          </div>
+          <p id="cloneStatus" class="status" role="status"></p>
+        </div>
+
+        <div class="settings-panel" data-panel="connection" hidden>
+          <label>
+            Ollama URL / host
+            <input id="ollamaUrl" name="ollamaUrl" placeholder="192.168.1.10 or http://127.0.0.1:11434" />
+          </label>
+          <label>
+            Model
+            <input id="ollamaModel" name="ollamaModel" placeholder="llama3.2:3b" />
+          </label>
+          <div class="row">
+            <button type="button" id="testBtn" class="ghost">Test connection</button>
+          </div>
+          <hr class="sep" />
+          <h3 class="section-title">Remote access (off Wi‑Fi)</h3>
+          <p id="remoteLine" class="hint">Checking network…</p>
+          <div id="remoteUrls" class="remote-urls"></div>
+          <div class="row">
+            <button type="button" id="remoteRefreshBtn" class="ghost">Refresh</button>
+            <a id="tailscaleDocs" class="ghost link-btn" href="https://tailscale.com/download" target="_blank" rel="noopener">Get Tailscale</a>
+          </div>
+          <hr class="sep" />
+          <h3 class="section-title">Google</h3>
+          <p id="googleLine" class="hint">Checking Google…</p>
+          <div id="googleSetupBox" class="google-setup" hidden>
+            <p class="hint">
+              Paste a Google Cloud <b>Web</b> OAuth client. Google rejects LAN IPs —
+              add <b>only</b> these redirect URIs:
+              <code id="googleRedirectHint">http://127.0.0.1:8765/api/google/callback</code>
+              and <code>http://localhost:8765/api/google/callback</code>.
+            </p>
+            <label>
+              Client ID
+              <input id="googleClientId" autocomplete="off" placeholder="….apps.googleusercontent.com" />
+            </label>
+            <label>
+              Client Secret
+              <input id="googleClientSecret" type="password" autocomplete="off" placeholder="GOCSPX-…" />
+            </label>
+            <button type="button" id="googleSaveCredsBtn" class="primary-btn">Save Google keys</button>
+            <p id="googleSetupStatus" class="status" role="status"></p>
+          </div>
+          <div class="row">
+            <button type="button" id="googleConnectBtn" class="google-btn">Sign in with Google</button>
+            <button type="button" id="googleDisconnectBtn" class="ghost" hidden>Disconnect</button>
+            <button type="button" id="gmailComposeBtn" class="ghost" hidden>Compose Gmail</button>
+            <button type="button" id="driveNoteBtn" class="ghost" hidden>Save note to Drive</button>
+          </div>
+        </div>
+
+        <div class="settings-panel" data-panel="household" hidden>
+          <p class="hint">
+            Family context, reminders, and device invites live on the PC.
+            Switch who’s talking from the menu.
+          </p>
+          <div class="row">
+            <button type="button" id="settingsFamilyBtn" class="primary-btn">Open family &amp; invites</button>
+          </div>
+        </div>
+      </div>
+
+      <p id="settingsStatus" class="status" role="status"></p>
+      <div class="settings-footer row">
+        <button type="submit" id="saveBtn" value="save">Save</button>
+        <button type="submit" class="ghost" value="cancel">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="gmailDialog">
+    <form method="dialog" id="gmailForm" class="settings">
+      <h2>Compose Gmail</h2>
+      <p class="hint">Creates a draft or sends with your connected Google account (consent required).</p>
       <label>
-        Companion name
-        <input id="companionName" name="companionName" placeholder="e.g. Aria, Soul, Nova" maxlength="40" />
+        To
+        <input id="gmailTo" name="to" type="email" required placeholder="friend@example.com" />
       </label>
       <label>
-        Tone
-        <select id="tone" name="tone">
-          <option value="friendly">Friendly</option>
-          <option value="professional">Professional</option>
-          <option value="calm">Calm</option>
-          <option value="energetic">Energetic</option>
-          <option value="creative">Creative</option>
-          <option value="analytical">Analytical</option>
+        Subject
+        <input id="gmailSubject" name="subject" placeholder="Hello" />
+      </label>
+      <label>
+        Message
+        <textarea id="gmailBody" name="body" rows="6" placeholder="Write your message…"></textarea>
+      </label>
+      <p id="gmailStatus" class="status" role="status"></p>
+      <div class="row">
+        <button type="button" id="gmailDraftBtn" class="ghost">Save draft</button>
+        <button type="button" id="gmailSendBtn">Send</button>
+        <button type="submit" class="ghost" value="cancel">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="familyDialog">
+    <form method="dialog" id="familyForm" class="settings">
+      <h2>Family / household</h2>
+      <p class="hint">
+        Opt-in context → members with privacy → shared reminders. Data stays on the PC.
+      </p>
+      <label class="check">
+        <input id="familyEnabled" type="checkbox" />
+        Enable family context
+      </label>
+      <label>
+        Household name
+        <input id="householdName" placeholder="Our household" maxlength="80" />
+      </label>
+      <label>
+        Shared values (comma-separated)
+        <input id="familyValues" placeholder="honesty, kindness" />
+      </label>
+      <label>
+        Boundaries (comma-separated)
+        <input id="familyBoundaries" placeholder="don't discuss X with kids" />
+      </label>
+      <label>
+        Add / update member
+        <input id="memberName" placeholder="Display name" />
+      </label>
+      <label>
+        Role
+        <select id="memberRole">
+          <option value="partner">Partner</option>
+          <option value="child">Child</option>
+          <option value="parent">Parent</option>
+          <option value="sibling">Sibling</option>
+          <option value="other">Other</option>
         </select>
       </label>
       <label>
-        Ollama URL / host
-        <input id="ollamaUrl" name="ollamaUrl" placeholder="192.168.1.10 or http://127.0.0.1:11434" />
+        Optional PIN (privacy wall)
+        <input id="memberPin" type="password" maxlength="12" autocomplete="off" />
       </label>
       <label>
-        Model
-        <input id="ollamaModel" name="ollamaModel" placeholder="llama3.2:3b" />
+        Family board fact
+        <input id="boardFact" placeholder="Shared fact for everyone" />
       </label>
-      <label class="check">
-        <input id="speakReplies" name="speakReplies" type="checkbox" />
-        Speak replies (PC voice)
+      <label>
+        Reminder
+        <input id="reminderText" placeholder="Pick up groceries Saturday" />
       </label>
-      <p id="voiceLine" class="hint"></p>
-      <p class="hint">
-        Cloning: on the PC run <code>voice clone record</code> or
-        <code>voice clone demo</code> in desktop CLI, then restart
-        <code>serve_pwa.py</code>.
-      </p>
-      <p id="settingsStatus" class="status" role="status"></p>
+      <hr class="sep" />
+      <h3 class="section-title">Invite device (QR)</h3>
+      <p class="hint">Sibling or staff scans this on the same LAN to link their phone.</p>
+      <label>
+        Invite role
+        <select id="familyInviteRole">
+          <option value="sibling">Sibling</option>
+          <option value="partner">Partner</option>
+          <option value="child">Child</option>
+          <option value="other">Staff / other</option>
+        </select>
+      </label>
+      <button type="button" id="familyInviteBtn" class="primary-btn">Create QR invite</button>
+      <div id="familyQrBox" class="qr-box" hidden>
+        <img id="familyQrImg" alt="Family invite QR" width="180" height="180" />
+        <p class="hint mono" id="familyInviteUrl"></p>
+        <div class="share-row">
+          <button type="button" id="familyCopyInvite" class="ghost">Copy link</button>
+          <button type="button" id="familyWhatsApp" class="share-wa">WhatsApp</button>
+          <button type="button" id="familyShare" class="ghost">Share (AirDrop / …)</button>
+        </div>
+      </div>
+      <p id="familyStatus" class="status" role="status"></p>
+      <div id="reminderList" class="hint"></div>
       <div class="row">
-        <button type="button" id="testBtn" class="ghost">Test</button>
-        <button type="button" id="testVoiceBtn" class="ghost">Test voice</button>
-        <button type="button" id="clearChatBtn" class="ghost">Clear chat</button>
-        <button type="submit" id="saveBtn" value="save">Save</button>
+        <button type="button" id="familySaveBtn">Save context</button>
+        <button type="button" id="memberAddBtn" class="ghost">Save member</button>
+        <button type="button" id="boardAddBtn" class="ghost">Add board</button>
+        <button type="button" id="reminderAddBtn" class="ghost">Add reminder</button>
         <button type="submit" class="ghost" value="cancel">Close</button>
       </div>
     </form>
