@@ -1437,10 +1437,14 @@ function stopSpeakPlayback() {
   setSpeakingBubble(false);
 }
 
-async function speakOneChunk(text, opts = {}) {
+// Synthesize one chunk and return a ready-to-play blob URL WITHOUT playing it.
+// Kept separate from playback so speak() can prefetch chunk N+1 while chunk N is
+// still playing (sentence-level streaming: playback of the next chunk starts the
+// instant the current one ends, instead of only fetching it afterwards).
+async function fetchChunkAudio(text, opts = {}) {
   const preview = !!opts.preview;
   const line = cleanSpeakText(text);
-  if (!line || /xmlns|www\.w3\.org/i.test(line)) return;
+  if (!line || /xmlns|www\.w3\.org/i.test(line)) return null;
   // Decide the engine. Previews are always fast Edge. For real replies the
   // user's voiceEngine choice applies:
   //  natural   -> Kokoro (offline, natural) — the mobile default
@@ -1485,13 +1489,20 @@ async function speakOneChunk(text, opts = {}) {
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
+  const respEngine = res.headers.get("X-Soul-TTS-Engine") || "tts";
+  return { url, respEngine };
+}
+
+// Play a previously-fetched chunk and resolve when it finishes.
+function playChunkAudio(entry) {
+  if (!entry) return Promise.resolve();
+  const { url, respEngine } = entry;
   const audio = new Audio(url);
   audio._objUrl = url;
   state.audio = audio;
-  const respEngine = res.headers.get("X-Soul-TTS-Engine") || "tts";
   setMode(`${companionLabel()} · speaking (${respEngine})`);
   setSpeakingBubble(true);
-  await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     audio.onended = () => {
       URL.revokeObjectURL(url);
       if (state.audio === audio) state.audio = null;
@@ -1524,9 +1535,19 @@ async function speak(text, opts = {}) {
   const gen = state.speakGen;
   const chunks = splitSpeakChunks(line, preview ? 160 : 480);
   try {
+    // Sentence-level streaming pipeline: keep the synthesis of the NEXT chunk
+    // in flight while the CURRENT chunk plays. next holds a promise for
+    // chunk i+1's audio so playback chains with no synthesis gap between
+    // sentences.
+    let next = chunks.length ? fetchChunkAudio(chunks[0], opts) : null;
     for (let i = 0; i < chunks.length; i++) {
       if (gen !== state.speakGen) return;
-      await speakOneChunk(chunks[i], opts);
+      const entry = await next;
+      // Kick off the next chunk's synthesis before we start playing this one.
+      next =
+        i + 1 < chunks.length ? fetchChunkAudio(chunks[i + 1], opts) : null;
+      if (gen !== state.speakGen) return;
+      await playChunkAudio(entry);
     }
     if (gen === state.speakGen) {
       setSpeakingBubble(false);
