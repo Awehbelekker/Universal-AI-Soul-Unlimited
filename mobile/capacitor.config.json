@@ -1,0 +1,21 @@
+{
+  "appId": "com.universalsoul.companion",
+  "appName": "Universal Soul",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true,
+    "allowNavigation": [
+      "http://*",
+      "https://*"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

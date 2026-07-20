@@ -1,0 +1,21 @@
+{
+  "name": "universal-soul-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Capacitor APK shell for Universal Soul AI (PC-brain client)",
+  "scripts": {
+    "sync-www": "node scripts/sync-www.mjs",
+    "cap:sync": "npm run sync-www && npx cap sync android",
+    "cap:open": "npx cap open android",
+    "build:hint": "echo Install Android Studio + JDK 17, then: npm run cap:sync && npm run cap:open"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.2",
+    "@capacitor/app": "^7.0.1",
+    "@capacitor/core": "^7.4.2",
+    "@capacitor/preferences": "^7.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.2"
+  }
+}

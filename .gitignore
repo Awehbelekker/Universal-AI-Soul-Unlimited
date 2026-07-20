@@ -84,6 +84,11 @@ models/hrm-checkpoints/*.pth
 # Test results
 benchmark_results/
 *.json
+!mobile/package.json
+!mobile/package-lock.json
+!mobile/capacitor.config.json
+!package.json
+!package-lock.json
 
 # Local voice clone samples
 data/voice_samples/
