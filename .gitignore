@@ -25,6 +25,14 @@ venv/
 ENV/
 env/
 
+# Node / Capacitor
+node_modules/
+mobile/node_modules/
+mobile/android/.gradle/
+mobile/android/**/build/
+*.apk
+*.aab
+
 # Buildozer
 .buildozer/
 bin/

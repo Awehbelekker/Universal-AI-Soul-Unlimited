@@ -35,13 +35,18 @@
 - **Family Phase A–C** (`core/family/`) — household context, members + PIN walls, board facts, reminders (PWA Family UI)
 - **Offline LIGHT pack** (`core/offline/`) — cached degraded replies + queue sync when LAN returns ([docs/OFFLINE_LIGHT.md](docs/OFFLINE_LIGHT.md))
 - **Security** (`core/security/`) — local-first audit trail (privacy redaction + opt-in AES), opt-in AES-256 at rest for session memory, and local HMAC-SHA256 JWT-style auth tokens
+- **Family Library** (`core/library/`) — feed PDF/txt/md into PC KB; tags (`parenting`, `support`, …); ask/summarize/support grounded in excerpts
+- **Storyteller voice** — parent’s own XTTS clone with mild local pitch shift; user-chosen character name only (no celebrity labels)
+- **Companion emotion eyes** — PWA presence face reacts to idle/thinking/listening/speaking/emotions
+- **Capacitor APK shell** (`mobile/`) — Android project + home-screen companion widget; see [docs/MOBILE_APK.md](docs/MOBILE_APK.md) (build needs JDK/Android Studio)
 - ThinkMesh multipass: planner → critic → synthesizer; CLI `think <question>`
 - `python scripts/smoke_roadmap.py` / other smokes under `scripts/`
 
 ## What does not work yet
 
 - Native on-device GGUF LIGHT/STANDARD in Android APK (PWA offline pack is degraded only)
-- Android 360° overlay (config only)
+- Pre-built APK binary in-repo (scaffold is ready; install Android Studio to compile)
+- Android 360° overlay (home widget ships; full overlay later)
 - Bundled PaddleOCR (optional import)
 - Full personality/values assessment service (basics + family context exist)
 - Full encrypted cloud sync — E2E crypto for the offline queue (queue sync is plaintext local). AES-256 at rest now exists opt-in for session memory + audit log, but not yet for profiles/household
@@ -56,7 +61,8 @@ Files named `*_COMPLETE.md` or claiming "Production Ready" may be **aspirational
 
 ## Next milestones
 
-1. Native Android LIGHT GGUF (optional if PWA+PC covers daily use)
-2. Extend AES at rest to profiles/household + E2E encrypted sync (opt-in AES already covers session memory + audit log)
-3. Family Phase D mesh only after A–C feel trusted daily
-4. Overlay / OCR after companion loop polish
+1. Build/install Capacitor APK from [`mobile/`](mobile/) — see [docs/MOBILE_APK.md](docs/MOBILE_APK.md) (JDK 17 + Android Studio required)
+2. Native Android LIGHT GGUF (optional if PWA+PC covers daily use)
+3. Extend AES at rest to profiles/household + E2E encrypted sync (opt-in AES already covers session memory + audit log)
+4. Family Phase D mesh only after A–C feel trusted daily
+5. Overlay / OCR after companion loop polish

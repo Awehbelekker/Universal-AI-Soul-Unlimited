@@ -15,12 +15,16 @@ const DEFAULTS = {
   //  "natural"   - Kokoro-82M, natural + fully offline (mobile default)
   //  "fast"      - fast Edge neural (Jenny), online
   //  "authentic" - your cloned voice via XTTS (may be slow)
+  //  "storyteller"- your clone with a mild distinct shift (kids read-aloud)
   //  "auto"      - authentic clone, but fall back to fast Edge if it lags
   voiceEngine: "natural",
+  storytellerName: "Bedtime Bear",
+  // Capacitor / off-origin: PC brain base, e.g. http://192.168.0.101:8765
+  brainUrl: "",
   theme: "auto",
 };
 
-const VOICE_ENGINES = ["natural", "fast", "authentic", "auto"];
+const VOICE_ENGINES = ["natural", "fast", "authentic", "storyteller", "auto"];
 // If a clone chunk takes longer than this, "auto" mode drops to fast Edge for
 // the rest of the reply so speech stays responsive.
 const CLONE_LAG_MS = 12000;
@@ -49,6 +53,46 @@ function normalizeOllamaUrl(raw) {
   }
 }
 
+function isNativeShell() {
+  try {
+    return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  } catch {
+    return false;
+  }
+}
+
+function normalizeBrainUrl(raw) {
+  let u = (raw || "").trim();
+  if (!u) return "";
+  if (!u.includes("://")) u = "http://" + u;
+  u = u.replace(/\/$/, "");
+  try {
+    const parsed = new URL(u);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+}
+
+function apiBase() {
+  return normalizeBrainUrl(state.settings && state.settings.brainUrl);
+}
+
+function apiUrl(path) {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const base = apiBase();
+  if (base) return base + p;
+  return p;
+}
+
+/** Absolute-aware fetch for /api and /proxy when running in the APK shell. */
+function soulFetch(input, init) {
+  if (typeof input === "string" && input.startsWith("/")) {
+    return fetch(apiUrl(input), init);
+  }
+  return fetch(input, init);
+}
+
 function loadSettings() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -73,6 +117,10 @@ function loadSettings() {
       voiceEngine: VOICE_ENGINES.includes(data.voiceEngine)
         ? data.voiceEngine
         : DEFAULTS.voiceEngine,
+      storytellerName:
+        (data.storytellerName || DEFAULTS.storytellerName).trim().slice(0, 40) ||
+        DEFAULTS.storytellerName,
+      brainUrl: normalizeBrainUrl(data.brainUrl || DEFAULTS.brainUrl),
       voiceTempo: clampInt(data.voiceTempo, -20, 20, DEFAULTS.voiceTempo),
       voicePitch: clampInt(data.voicePitch, -10, 10, DEFAULTS.voicePitch),
       theme: ["auto", "dark", "light"].includes(data.theme)
@@ -107,6 +155,10 @@ function saveSettings(settings) {
     voiceEngine: VOICE_ENGINES.includes(settings.voiceEngine)
       ? settings.voiceEngine
       : DEFAULTS.voiceEngine,
+    storytellerName:
+      (settings.storytellerName || DEFAULTS.storytellerName).trim().slice(0, 40) ||
+      DEFAULTS.storytellerName,
+    brainUrl: normalizeBrainUrl(settings.brainUrl || DEFAULTS.brainUrl),
     voiceTempo: clampInt(settings.voiceTempo, -20, 20, DEFAULTS.voiceTempo),
     voicePitch: clampInt(settings.voicePitch, -10, 10, DEFAULTS.voicePitch),
     theme: ["auto", "dark", "light"].includes(settings.theme)
@@ -148,30 +200,54 @@ const state = {
   family: null,
 };
 
-const chatEl = document.getElementById("chat");
+const canvasEl = document.getElementById("canvas");
 const chatEmpty = document.getElementById("chatEmpty");
-const emptyName = document.getElementById("emptyName");
 const formEl = document.getElementById("composer");
 const inputEl = document.getElementById("message");
 const sendBtn = document.getElementById("sendBtn");
 const chatMicBtn = document.getElementById("chatMicBtn");
 const chatNoteBtn = document.getElementById("chatNoteBtn");
 const chatNoteFile = document.getElementById("chatNoteFile");
+const dockToolsBtn = document.getElementById("dockToolsBtn");
 const modeLine = document.getElementById("modeLine");
 const brandName = document.getElementById("brandName");
-const statusStrip = document.getElementById("statusStrip");
-const statusStripText = document.getElementById("statusStripText");
+const connectionDot = document.getElementById("connectionDot");
+const connectionLabel = document.getElementById("connectionLabel");
+const presenceOrb = document.getElementById("presenceOrb");
+const activityLabel = document.getElementById("activityLabel");
+const progressLine = document.getElementById("progressLine");
+const responseCard = document.getElementById("responseCard");
+const responseText = document.getElementById("responseText");
+const responseTools = document.getElementById("responseTools");
+const responseSkeleton = document.getElementById("responseSkeleton");
+const lastUserLine = document.getElementById("lastUserLine");
+const systemNotice = document.getElementById("systemNotice");
+const threadHistory = document.getElementById("threadHistory");
+const threadList = document.getElementById("threadList");
 const menuBtn = document.getElementById("menuBtn");
 const menuDialog = document.getElementById("menuDialog");
 const menuSettingsBtn = document.getElementById("menuSettingsBtn");
 const menuFamilyBtn = document.getElementById("menuFamilyBtn");
+const menuLibraryBtn = document.getElementById("menuLibraryBtn");
 const menuInviteBtn = document.getElementById("menuInviteBtn");
 const menuCloseBtn = document.getElementById("menuCloseBtn");
+const libraryDialog = document.getElementById("libraryDialog");
+const libraryFile = document.getElementById("libraryFile");
+const libraryTitle = document.getElementById("libraryTitle");
+const libraryVisibility = document.getElementById("libraryVisibility");
+const libraryTags = document.getElementById("libraryTags");
+const libraryFeedBtn = document.getElementById("libraryFeedBtn");
+const libraryRefreshBtn = document.getElementById("libraryRefreshBtn");
+const libraryCloseBtn = document.getElementById("libraryCloseBtn");
+const libraryStatus = document.getElementById("libraryStatus");
+const libraryList = document.getElementById("libraryList");
+const storytellerNameInput = document.getElementById("storytellerName");
 const settingsFamilyBtn = document.getElementById("settingsFamilyBtn");
 const themeSelect = document.getElementById("themeSelect");
 const dialog = document.getElementById("settingsDialog");
 const settingsForm = document.getElementById("settingsForm");
 const urlInput = document.getElementById("ollamaUrl");
+const brainUrlInput = document.getElementById("brainUrl");
 const modelInput = document.getElementById("ollamaModel");
 const nameInput = document.getElementById("companionName");
 const toneInput = document.getElementById("tone");
@@ -345,7 +421,7 @@ function setOfflineUi(offline) {
   state.online = !offline;
   if (offlineBanner) offlineBanner.hidden = !offline;
   if (offline && googleBanner) googleBanner.hidden = true;
-  if (offline) setMode(`${companionLabel()} · offline light`);
+  setConnectionStatus(offline ? "offline" : "online", offline ? "Offline light" : "On your LAN");
   if (formEl) formEl.classList.toggle("is-busy", !!state.busy);
 }
 
@@ -398,6 +474,183 @@ function initStarterChips() {
   });
 }
 
+function initFloatingDock() {
+  if (!formEl || !inputEl) return;
+  const syncDock = () => {
+    const has = inputEl.value.trim().length > 0;
+    if (sendBtn) sendBtn.hidden = !has;
+    formEl.classList.toggle("has-text", has);
+  };
+  inputEl.addEventListener("input", syncDock);
+  inputEl.addEventListener("focus", () => formEl.classList.add("is-focused"));
+  inputEl.addEventListener("blur", () => {
+    if (!inputEl.value.trim()) formEl.classList.remove("is-focused");
+  });
+  syncDock();
+  if (dockToolsBtn && toolChipsEl) {
+    dockToolsBtn.addEventListener("click", () => {
+      toolChipsEl.classList.toggle("open");
+      toolChipsEl.hidden = false;
+    });
+  }
+  document.addEventListener("click", (ev) => {
+    if (!toolChipsEl || !toolChipsEl.classList.contains("open")) return;
+    if (ev.target.closest(".dock-wrap")) return;
+    toolChipsEl.classList.remove("open");
+  });
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function setConnectionStatus(state, label) {
+  if (connectionDot) connectionDot.dataset.state = state;
+  if (connectionLabel) connectionLabel.textContent = label;
+}
+
+function setPresenceState(stateName, emotion) {
+  if (!presenceOrb) return;
+  const st = stateName || "idle";
+  presenceOrb.dataset.state = st;
+  const emo =
+    emotion ||
+    ({
+      idle: "idle",
+      thinking: "thinking",
+      listening: "listening",
+      speaking: "happy",
+      tool: "thinking",
+    }[st] || "idle");
+  presenceOrb.dataset.emotion = emo;
+  syncWidgetPresence(st, emo);
+}
+
+function syncWidgetPresence(stateName, emotion) {
+  try {
+    const payload = JSON.stringify({
+      state: stateName || "idle",
+      emotion: emotion || "idle",
+      name: companionLabel(),
+      updated: Date.now(),
+    });
+    localStorage.setItem("usa_widget_presence", payload);
+    // Capacitor Preferences bridge for the Android home-screen widget
+    const Cap = window.Capacitor;
+    if (Cap && Cap.Plugins && Cap.Plugins.Preferences) {
+      Cap.Plugins.Preferences.set({ key: "usa_widget_presence", value: payload });
+    }
+    if (window.SoulWidget && typeof window.SoulWidget.update === "function") {
+      window.SoulWidget.update(payload);
+    }
+  } catch {
+    /* widget sync is best-effort */
+  }
+}
+
+function detectReplyEmotion(text) {
+  const t = (text || "").toLowerCase();
+  if (!t) return "idle";
+  if ((t.match(/!/g) || []).length >= 2 || /\b(amazing|awesome|woohoo|excited|fantastic)\b/.test(t))
+    return "excited";
+  if (/\b(sorry|unfortunately|careful|warning|important|serious)\b/.test(t))
+    return "concerned";
+  if (/\b(gentle|softly|breathe|calm|peace|rest|quiet|bedtime)\b/.test(t))
+    return "listening";
+  if (/\b(love|glad|happy|warm|proud|here for you)\b/.test(t)) return "happy";
+  return "happy";
+}
+
+function showActivity(label, show = true) {
+  if (!activityLabel) return;
+  if (show && label) {
+    activityLabel.hidden = false;
+    activityLabel.textContent = label;
+  } else {
+    activityLabel.hidden = true;
+  }
+}
+
+function showSkeleton(on) {
+  if (responseSkeleton) responseSkeleton.hidden = !on;
+  if (on && responseCard) responseCard.hidden = true;
+}
+
+function syncCanvasEmpty() {
+  if (!chatEmpty) return;
+  const hasExchange =
+    (responseCard && !responseCard.hidden) ||
+    (lastUserLine && !lastUserLine.hidden) ||
+    state.history.length > 0;
+  chatEmpty.hidden = hasExchange;
+}
+
+function appendThreadPair(userText, aiText, tools) {
+  if (!threadList) return;
+  const block = document.createElement("div");
+  block.className = "thread-block";
+  block.innerHTML =
+    `<div class="thread-item thread-user"><span class="thread-label">You</span><p>${escapeHtml(userText)}</p></div>` +
+    `<div class="thread-item thread-ai"><span class="thread-label">${escapeHtml(companionLabel())}</span><p>${escapeHtml(aiText)}</p></div>`;
+  threadList.appendChild(block);
+  if (threadHistory) threadHistory.hidden = false;
+}
+
+function archiveCurrentExchange() {
+  const userText = (lastUserLine?.textContent || "").trim();
+  const aiText = (responseText?.textContent || "").trim();
+  if (!userText || !aiText || !responseCard || responseCard.hidden) return;
+  appendThreadPair(userText, aiText);
+  if (lastUserLine) lastUserLine.hidden = true;
+  if (responseCard) responseCard.hidden = true;
+  if (responseTools) responseTools.innerHTML = "";
+}
+
+function buildToolSteps(tools) {
+  const list = (tools || []).filter((t) => t && t.tool);
+  if (!list.length) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "tool-steps";
+  for (const t of list) {
+    const chip = document.createElement("span");
+    chip.className = "tool-step" + (t.ok === false ? " err" : " done");
+    chip.textContent = toolPillLabel(t);
+    wrap.appendChild(chip);
+  }
+  return wrap;
+}
+
+function renderFromHistory() {
+  if (!state.history.length) return;
+  const turns = state.history.filter(
+    (t) => t.role === "user" || t.role === "assistant"
+  );
+  if (turns.length >= 2) {
+    for (let i = 0; i < turns.length - 2; i += 2) {
+      const u = turns[i];
+      const a = turns[i + 1];
+      if (u?.role === "user" && a?.role === "assistant") {
+        appendThreadPair(u.text, a.text);
+      }
+    }
+    const lastUser = [...turns].reverse().find((t) => t.role === "user");
+    const lastAi = [...turns].reverse().find((t) => t.role === "assistant");
+    if (lastUser && lastUserLine) {
+      lastUserLine.hidden = false;
+      lastUserLine.textContent = lastUser.text;
+    }
+    if (lastAi && responseCard && responseText) {
+      responseCard.hidden = false;
+      responseText.textContent = lastAi.text;
+      state.lastAiBubble = responseCard;
+    }
+  }
+  syncCanvasEmpty();
+}
+
 function openMenuSheet() {
   refreshFamily();
   openSheet(menuDialog);
@@ -405,7 +658,7 @@ function openMenuSheet() {
 
 async function refreshOfflinePack() {
   try {
-    const res = await fetch("/api/offline-pack");
+    const res = await soulFetch("/api/offline-pack");
     const data = await res.json();
     state.offlinePack = data;
     localStorage.setItem("usa_offline_pack", JSON.stringify(data));
@@ -434,7 +687,7 @@ function localLightReply(message) {
 
 async function refreshFamily() {
   try {
-    const res = await fetch("/api/family");
+    const res = await soulFetch("/api/family");
     const data = await res.json();
     state.family = data;
     if (memberSelect) {
@@ -465,7 +718,7 @@ async function refreshFamily() {
 async function refreshReminders() {
   if (!reminderList) return;
   try {
-    const res = await fetch("/api/family/reminders");
+    const res = await soulFetch("/api/family/reminders");
     const data = await res.json();
     const items = data.reminders || [];
     reminderList.textContent = items.length
@@ -503,14 +756,10 @@ function applyBrand() {
   const name = companionLabel();
   brandName.textContent = name;
   document.title = name;
-  if (emptyName) emptyName.textContent = name;
 }
 
 function syncChatEmpty() {
-  if (!chatEmpty || !chatEl) return;
-  const hasBubbles =
-    !!chatEl.querySelector(".bubble-row") || !!chatEl.querySelector(".bubble");
-  chatEmpty.hidden = hasBubbles;
+  syncCanvasEmpty();
 }
 
 function companionInitial() {
@@ -553,75 +802,98 @@ function buildToolPills(tools) {
 }
 
 function addBubble(role, text, extra = {}) {
+  if (systemNotice) systemNotice.hidden = true;
   if (role === "user") {
-    const row = document.createElement("div");
-    row.className = "bubble-row user-row";
-    const bubble = document.createElement("div");
-    bubble.className = "bubble user";
-    bubble.textContent = text;
-    row.appendChild(bubble);
-    chatEl.appendChild(row);
+    archiveCurrentExchange();
+    if (lastUserLine) {
+      lastUserLine.hidden = false;
+      lastUserLine.textContent = text;
+    }
   } else if (role === "ai") {
-    const row = document.createElement("div");
-    row.className = "bubble-row ai-row";
-    const avatar = document.createElement("span");
-    avatar.className = "bubble-avatar";
-    avatar.setAttribute("aria-hidden", "true");
-    avatar.textContent = companionInitial();
-    const stack = document.createElement("div");
-    stack.className = "bubble-stack";
-    const bubble = document.createElement("div");
-    bubble.className = "bubble ai";
-    bubble.textContent = text;
-    stack.appendChild(bubble);
-    const pills = buildToolPills(extra.tools || []);
-    if (pills) stack.appendChild(pills);
-    row.appendChild(avatar);
-    row.appendChild(stack);
-    chatEl.appendChild(row);
-    state.lastAiBubble = bubble;
+    showSkeleton(false);
+    if (progressLine) progressLine.hidden = true;
+    if (responseCard && responseText) {
+      responseCard.hidden = false;
+      responseText.textContent = text;
+      state.lastAiBubble = responseCard;
+    }
+    if (responseTools) {
+      responseTools.innerHTML = "";
+      const steps = buildToolSteps(extra.tools || []);
+      if (steps) responseTools.appendChild(steps);
+    }
   } else {
-    const div = document.createElement("div");
-    div.className = `bubble ${role}`;
-    div.textContent = text;
-    chatEl.appendChild(div);
+    if (systemNotice) {
+      systemNotice.hidden = false;
+      systemNotice.textContent = text;
+    }
   }
-  syncChatEmpty();
-  chatEl.scrollTop = chatEl.scrollHeight;
+  syncCanvasEmpty();
+  if (canvasEl) canvasEl.scrollTop = canvasEl.scrollHeight;
   return state.lastAiBubble;
 }
 
 function setSpeakingBubble(on) {
-  if (state.lastAiBubble) {
-    state.lastAiBubble.classList.toggle("is-speaking-audio", !!on);
+  if (responseCard) {
+    responseCard.classList.toggle("is-speaking-audio", !!on);
   }
+}
+
+function resetIdleUi() {
+  setMode("");
+  setConnectionStatus(
+    state.online === false ? "offline" : "online",
+    state.online === false ? "Offline light" : "On your LAN"
+  );
+}
+
+function activityFromMode(text) {
+  const t = (text || "").toLowerCase();
+  if (t.includes("speaking")) return "Speaking…";
+  if (t.includes("listening")) return "Listening…";
+  if (t.includes("recording")) return "Recording…";
+  if (t.includes("transcrib")) return "Transcribing…";
+  if (t.includes("thinking")) return "Thinking…";
+  if (t.includes("synthesiz")) return "Preparing voice…";
+  if (t.includes("search")) return "Searching…";
+  if (t.includes("reconnecting")) return "Reconnecting…";
+  return text;
 }
 
 function setMode(text) {
   const next = text || "";
-  modeLine.textContent = next;
   const t = next.toLowerCase();
   const speaking = t.includes("speaking");
+  const listening = t.includes("listening") || t.includes("recording");
   const thinking =
     t.includes("thinking") ||
     t.includes("transcrib") ||
     t.includes("synthesiz") ||
-    t.includes("recording");
+    t.includes("reconnecting");
+  const busy = speaking || listening || thinking;
+
   document.body.classList.toggle("is-speaking", speaking);
   document.body.classList.toggle("is-thinking", thinking && !speaking);
-  if (statusStrip && statusStripText) {
-    const active = speaking || thinking;
-    statusStrip.hidden = !active;
-    statusStrip.dataset.mode = speaking
-      ? "speaking"
-      : thinking
-        ? "thinking"
-        : "busy";
-    const short = next.includes("·")
-      ? next.split("·").pop().trim()
-      : next;
-    statusStripText.textContent = short || next;
+
+  if (speaking) setPresenceState("speaking");
+  else if (listening) setPresenceState("listening");
+  else if (thinking) setPresenceState("thinking");
+  else setPresenceState("idle");
+
+  if (busy) {
+    showActivity(activityFromMode(next));
+    if (thinking && !speaking) {
+      showSkeleton(true);
+      if (progressLine) progressLine.hidden = false;
+    }
+  } else {
+    showActivity(null, false);
+    if (!state.busy) {
+      showSkeleton(false);
+      if (progressLine) progressLine.hidden = true;
+    }
   }
+
   if (formEl) formEl.classList.toggle("is-busy", !!state.busy);
 }
 
@@ -649,6 +921,7 @@ function closeSheet(dlg) {
 
 function fillSettingsForm() {
   urlInput.value = state.settings.ollamaUrl;
+  if (brainUrlInput) brainUrlInput.value = state.settings.brainUrl || "";
   modelInput.value = state.settings.ollamaModel;
   nameInput.value = state.settings.companionName;
   toneInput.value = state.settings.tone;
@@ -659,6 +932,9 @@ function fillSettingsForm() {
       state.settings.kokoroVoice || DEFAULTS.kokoroVoice;
   if (voiceEngineInput)
     voiceEngineInput.value = state.settings.voiceEngine || "natural";
+  if (storytellerNameInput)
+    storytellerNameInput.value =
+      state.settings.storytellerName || DEFAULTS.storytellerName;
   if (voiceTempoInput) {
     voiceTempoInput.value = String(state.settings.voiceTempo || 0);
     if (tempoVal) tempoVal.textContent = voiceTempoInput.value;
@@ -680,7 +956,7 @@ async function refreshRemoteAccess() {
   remoteLine.textContent = "Checking network…";
   remoteUrls.innerHTML = "";
   try {
-    const res = await fetch("/api/remote-access");
+    const res = await soulFetch("/api/remote-access");
     const data = await res.json();
     const rows = [];
     for (const url of data.lan_urls || []) {
@@ -730,7 +1006,7 @@ async function refreshRemoteAccess() {
 async function refreshGoogleLine() {
   if (!googleLine) return;
   try {
-    const res = await fetch("/api/google/status");
+    const res = await soulFetch("/api/google/status");
     const data = await res.json();
     state.google = data;
     if (googleRedirectHint) {
@@ -804,7 +1080,7 @@ async function refreshGoogleLine() {
 }
 
 async function saveGoogleCreds(clientId, clientSecret, statusEl) {
-  const res = await fetch("/api/google/setup", {
+  const res = await soulFetch("/api/google/setup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -829,7 +1105,7 @@ async function saveGoogleCreds(clientId, clientSecret, statusEl) {
 
 async function startGoogleLogin() {
   try {
-    const res = await fetch("/api/google/status");
+    const res = await soulFetch("/api/google/status");
     const data = await res.json();
     if (!data.configured) {
       if (googleSetupBox) googleSetupBox.hidden = false;
@@ -877,7 +1153,7 @@ async function gmailAction(action) {
   gmailStatus.className = "status";
   gmailStatus.textContent = action === "send" ? "Sending…" : "Saving draft…";
   try {
-    const res = await fetch("/api/google/email", {
+    const res = await soulFetch("/api/google/email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -918,20 +1194,50 @@ function systemPrompt() {
 async function loadToolChips() {
   if (!toolChipsEl) return;
   try {
-    const res = await fetch("/api/tools");
+    const res = await soulFetch("/api/tools");
     const data = await res.json();
     state.tools = data.tools || [];
     toolChipsEl.innerHTML = "";
+    const memoBtn = document.createElement("button");
+    memoBtn.type = "button";
+    memoBtn.textContent = "Voice memo";
+    memoBtn.title = "Attach a saved voice note";
+    memoBtn.addEventListener("click", () => {
+      toolChipsEl.classList.remove("open");
+      if (chatNoteFile) chatNoteFile.click();
+    });
+    toolChipsEl.appendChild(memoBtn);
+    const feedBtn = document.createElement("button");
+    feedBtn.type = "button";
+    feedBtn.textContent = "Feed document";
+    feedBtn.title = "Upload a book or document into the family library";
+    feedBtn.addEventListener("click", () => {
+      toolChipsEl.classList.remove("open");
+      if (libraryFile) libraryFile.click();
+    });
+    toolChipsEl.appendChild(feedBtn);
+    const libBtn = document.createElement("button");
+    libBtn.type = "button";
+    libBtn.textContent = "Library";
+    libBtn.title = "Open family library";
+    libBtn.addEventListener("click", async () => {
+      toolChipsEl.classList.remove("open");
+      await openLibraryPanel();
+    });
+    toolChipsEl.appendChild(libBtn);
     const wow = state.tools.filter((t) => t.wow);
-    const list = (wow.length ? wow : state.tools).slice(0, 10);
+    const list = (wow.length ? wow : state.tools).slice(0, 8);
     for (const t of list) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = t.chip || t.title;
       btn.title = t.description || t.title;
       btn.addEventListener("click", () => {
+        toolChipsEl.classList.remove("open");
         inputEl.value = t.prompt_hint || `${t.name} `;
         inputEl.focus();
+        formEl?.classList.add("is-focused", "has-text");
+        if (sendBtn) sendBtn.hidden = false;
         const len = inputEl.value.length;
         inputEl.setSelectionRange(len, len);
       });
@@ -944,10 +1250,13 @@ async function loadToolChips() {
         data.search_provider === "google_cse" ? "Search · Google" : "Search · DDG";
       tip.title = "Web search provider on this PC";
       tip.addEventListener("click", () => {
+        toolChipsEl.classList.remove("open");
         inputEl.value = "search ";
         inputEl.focus();
+        formEl?.classList.add("is-focused", "has-text");
+        if (sendBtn) sendBtn.hidden = false;
       });
-      toolChipsEl.prepend(tip);
+      toolChipsEl.appendChild(tip);
     }
   } catch {
     toolChipsEl.innerHTML = "";
@@ -956,7 +1265,7 @@ async function loadToolChips() {
 
 async function syncProfileFromPc() {
   try {
-    const res = await fetch("/api/profile");
+    const res = await soulFetch("/api/profile");
     const data = await res.json();
     if (!data.ok) return;
     let changed = false;
@@ -978,6 +1287,10 @@ async function syncProfileFromPc() {
         changed = true;
       }
     }
+    if (data.storyteller_name && typeof data.storyteller_name === "string") {
+      state.settings.storytellerName = data.storyteller_name.trim().slice(0, 40);
+      changed = true;
+    }
     if (changed) {
       state.settings = saveSettings(state.settings);
       applyBrand();
@@ -989,12 +1302,13 @@ async function syncProfileFromPc() {
 
 async function pushProfileToPc() {
   try {
-    await fetch("/api/profile", {
+    await soulFetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         companion_name: state.settings.companionName,
         tone: state.settings.tone,
+        storyteller_name: state.settings.storytellerName,
       }),
     });
   } catch {
@@ -1004,7 +1318,7 @@ async function pushProfileToPc() {
 
 async function refreshVoiceLine() {
   try {
-    const res = await fetch("/api/voice-status");
+    const res = await soulFetch("/api/voice-status");
     const data = await res.json();
     state.voiceMeta = data;
     if (voiceIdInput && Array.isArray(data.voices) && data.voices.length) {
@@ -1059,6 +1373,152 @@ async function refreshVoiceLine() {
   }
 }
 
+async function openLibraryPanel() {
+  if (!libraryDialog) return;
+  openSheet(libraryDialog);
+  await refreshLibrary();
+}
+
+function setLibraryStatus(msg) {
+  if (libraryStatus) libraryStatus.textContent = msg || "";
+}
+
+async function refreshLibrary() {
+  if (!libraryList) return;
+  setLibraryStatus("Loading…");
+  try {
+    const mid = encodeURIComponent(state.memberId || "primary");
+    const res = await soulFetch(`/api/library?member_id=${mid}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Failed to load library");
+    const docs = data.docs || [];
+    libraryList.innerHTML = "";
+    if (!docs.length) {
+      libraryList.innerHTML =
+        '<p class="hint">No documents yet. Tap Feed document to add a book or PDF.</p>';
+      setLibraryStatus("");
+      return;
+    }
+    for (const doc of docs) {
+      const row = document.createElement("div");
+      row.className = "library-item";
+      const title = doc.title || doc.filename || "Untitled";
+      const vis = doc.visibility === "private" ? "Private" : "Family";
+      const chunks = doc.chunk_count != null ? `${doc.chunk_count} chunks` : "";
+      const tags = (doc.tags || []).length ? (doc.tags || []).join(", ") : "";
+      row.innerHTML = `<strong></strong><div class="meta"></div><div class="actions"></div>`;
+      row.querySelector("strong").textContent = title;
+      row.querySelector(".meta").textContent = [vis, doc.filename || "", chunks, tags]
+        .filter(Boolean)
+        .join(" · ");
+      const actions = row.querySelector(".actions");
+      const sumBtn = document.createElement("button");
+      sumBtn.type = "button";
+      sumBtn.className = "ghost";
+      sumBtn.textContent = "Summarize";
+      sumBtn.addEventListener("click", () => {
+        closeSheet(libraryDialog);
+        inputEl.value = `Summarize ${title}`;
+        inputEl.focus();
+        formEl?.classList.add("is-focused", "has-text");
+        if (sendBtn) sendBtn.hidden = false;
+      });
+      const askBtn = document.createElement("button");
+      askBtn.type = "button";
+      askBtn.className = "ghost";
+      askBtn.textContent = "Ask";
+      askBtn.addEventListener("click", () => {
+        closeSheet(libraryDialog);
+        inputEl.value = `In the book ${title}, `;
+        inputEl.focus();
+        formEl?.classList.add("is-focused", "has-text");
+        if (sendBtn) sendBtn.hidden = false;
+        const len = inputEl.value.length;
+        inputEl.setSelectionRange(len, len);
+      });
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "ghost";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", async () => {
+        if (!confirm(`Remove “${title}” from the library?`)) return;
+        try {
+          const delRes = await soulFetch("/api/library/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: doc.id,
+              member_id: state.memberId || "primary",
+            }),
+          });
+          const delData = await delRes.json();
+          if (!delData.ok) throw new Error(delData.error || "Delete failed");
+          await refreshLibrary();
+        } catch (err) {
+          setLibraryStatus(err.message || "Delete failed");
+        }
+      });
+      actions.appendChild(sumBtn);
+      actions.appendChild(askBtn);
+      actions.appendChild(delBtn);
+      libraryList.appendChild(row);
+    }
+    setLibraryStatus(`${docs.length} document${docs.length === 1 ? "" : "s"}`);
+  } catch (err) {
+    libraryList.innerHTML = "";
+    setLibraryStatus(err.message || "Could not load library");
+  }
+}
+
+async function uploadLibraryFile(file) {
+  if (!file) return;
+  const title = (libraryTitle && libraryTitle.value.trim()) || "";
+  const visibility =
+    (libraryVisibility && libraryVisibility.value) || "family";
+  const tags = libraryTags
+    ? Array.from(libraryTags.selectedOptions || []).map((o) => o.value)
+    : [];
+  showActivity("Feeding document…", true);
+  setPresenceState("thinking");
+  setMode("Feeding into library…");
+  setLibraryStatus(`Uploading ${file.name}…`);
+  try {
+    const dataUrl = await fileToBase64(file);
+    const res = await soulFetch("/api/library/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_b64: dataUrl,
+        filename: file.name,
+        title,
+        visibility,
+        tags,
+        member_id: state.memberId || "primary",
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const docTitle = (data.doc && data.doc.title) || file.name;
+    const tagNote = (data.doc && data.doc.tags && data.doc.tags.length)
+      ? ` · ${data.doc.tags.join(", ")}`
+      : "";
+    setLibraryStatus(`Fed “${docTitle}” (${data.doc?.chunk_count || "?"} chunks)${tagNote}`);
+    if (libraryTitle) libraryTitle.value = "";
+    addBubble(
+      "system",
+      `Added “${docTitle}” to the family library. Ask me to summarize it anytime.`
+    );
+    await refreshLibrary();
+    resetIdleUi();
+  } catch (err) {
+    setLibraryStatus(err.message || "Upload failed");
+    addBubble("system", `Library feed failed: ${err.message}`);
+    resetIdleUi();
+  } finally {
+    showActivity("", false);
+  }
+}
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1089,7 +1549,7 @@ function cloneExtForMime(mime) {
 }
 
 async function postCloneAudio(dataUrl, filename) {
-  const res = await fetch("/api/voice/clone", {
+  const res = await soulFetch("/api/voice/clone", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1206,7 +1666,7 @@ function stopCloneRecording(auto = false) {
             ? "Recording too short — hold at least ~6 seconds."
             : "Too short — speak for at least ~6 seconds, then stop.";
         }
-        setMode(`${companionLabel()} · ready`);
+        resetIdleUi();
         resolve(null);
         return;
       }
@@ -1233,14 +1693,14 @@ function stopCloneRecording(auto = false) {
               "Voice note saved (Edge until Coqui installed).";
         }
         await refreshVoiceLine();
-        setMode(`${companionLabel()} · ready`);
+        resetIdleUi();
         resolve(data);
       } catch (err) {
         if (cloneStatus) {
           cloneStatus.className = "status err";
           cloneStatus.textContent = String(err.message || err);
         }
-        setMode(`${companionLabel()} · ready`);
+        resetIdleUi();
         resolve(null);
       }
     };
@@ -1269,7 +1729,8 @@ async function proxyFetch(path, options = {}) {
     "X-Ollama-URL": target,
     ...(options.headers || {}),
   };
-  return fetch(path, { ...options, headers });
+  const url = path.startsWith("/") ? apiUrl(path) : path;
+  return fetch(url, { ...options, headers });
 }
 
 async function probe() {
@@ -1450,6 +1911,7 @@ async function fetchChunkAudio(text, opts = {}) {
   //  natural   -> Kokoro (offline, natural) — the mobile default
   //  fast      -> Edge neural (online)
   //  authentic -> XTTS clone
+  //  storyteller -> parent clone + mild distinct shift
   //  auto      -> clone, but a lagging chunk trips state.cloneLagged so the
   //               rest of the reply falls back to fast Edge for responsiveness.
   const choice = state.settings.voiceEngine || "natural";
@@ -1463,15 +1925,23 @@ async function fetchChunkAudio(text, opts = {}) {
       ? state.settings.kokoroVoice || DEFAULTS.kokoroVoice
       : state.settings.voiceId || "auto";
   const started = Date.now();
-  const res = await fetch("/api/speak", {
+  const tempo =
+    engine === "storyteller"
+      ? (state.settings.voiceTempo || 0) - 8
+      : state.settings.voiceTempo || 0;
+  const pitch =
+    engine === "storyteller"
+      ? (state.settings.voicePitch || 0) + 5
+      : state.settings.voicePitch || 0;
+  const res = await soulFetch("/api/speak", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       text: line,
       personality: state.settings.tone || "friendly",
       voice_id: voiceId,
-      rate_bias: state.settings.voiceTempo || 0,
-      pitch_bias: state.settings.voicePitch || 0,
+      rate_bias: tempo,
+      pitch_bias: pitch,
       engine: engine,
       preview: preview,
       max_chars: preview ? 160 : 520,
@@ -1534,6 +2004,15 @@ async function speak(text, opts = {}) {
   stopSpeakPlayback();
   const gen = state.speakGen;
   const chunks = splitSpeakChunks(line, preview ? 160 : 480);
+  const emo = detectReplyEmotion(line);
+  setPresenceState("speaking", emo);
+  if (
+    !preview &&
+    state.settings.voiceEngine === "storyteller" &&
+    state.settings.storytellerName
+  ) {
+    showActivity(`${state.settings.storytellerName} is reading…`, true);
+  }
   try {
     // Sentence-level streaming pipeline: keep the synthesis of the NEXT chunk
     // in flight while the CURRENT chunk plays. next holds a promise for
@@ -1551,21 +2030,27 @@ async function speak(text, opts = {}) {
     }
     if (gen === state.speakGen) {
       setSpeakingBubble(false);
-      setMode(`${companionLabel()} · ready`);
+      resetIdleUi();
     }
   } catch (err) {
     setSpeakingBubble(false);
     addBubble("system", `Voice error: ${err.message}`);
-    setMode(`${companionLabel()} · ready`);
+    resetIdleUi();
   }
 }
 
 function clearChat() {
   state.history = [];
   saveHistory(state.history);
-  chatEl.querySelectorAll(".bubble-row, .bubble").forEach((n) => n.remove());
+  if (threadList) threadList.innerHTML = "";
+  if (threadHistory) threadHistory.hidden = true;
+  if (responseCard) responseCard.hidden = true;
+  if (responseText) responseText.textContent = "";
+  if (responseTools) responseTools.innerHTML = "";
+  if (lastUserLine) lastUserLine.hidden = true;
+  if (systemNotice) systemNotice.hidden = true;
   state.lastAiBubble = null;
-  syncChatEmpty();
+  syncCanvasEmpty();
   addBubble("system", `Chat cleared. ${companionLabel()} is listening fresh.`);
 }
 
@@ -1582,18 +2067,21 @@ formEl.addEventListener("submit", async (e) => {
   inputEl.value = "";
   addBubble("user", message);
   setMode("Thinking…");
+  showSkeleton(true);
   try {
     const reply = await chat(message);
     state.history.push({ role: "user", text: message });
     state.history.push({ role: "assistant", text: reply });
     saveHistory(state.history);
     addBubble("ai", reply, { tools: state.lastTools || [] });
-    setMode(`${companionLabel()} · ready`);
+    resetIdleUi();
     const line = (state.lastSpeak || reply || "").trim();
     if (line) await speak(line);
   } catch (err) {
+    showSkeleton(false);
     addBubble("system", `Ollama error: ${err.message}`);
-    setMode("Offline / demo");
+    setMode("");
+    setConnectionStatus("offline", "Unreachable");
   } finally {
     state.busy = false;
     sendBtn.disabled = false;
@@ -1601,6 +2089,7 @@ formEl.addEventListener("submit", async (e) => {
     if (chatMicBtn) chatMicBtn.disabled = false;
     if (chatNoteBtn) chatNoteBtn.disabled = false;
     if (formEl) formEl.classList.remove("is-busy");
+    if (sendBtn) sendBtn.hidden = !inputEl.value.trim();
     inputEl.focus();
   }
 });
@@ -1643,7 +2132,7 @@ function micBlockedHelp(errMsg) {
 async function transcribeBlob(blob, filename) {
   setMode("Transcribing on PC…");
   const dataUrl = await fileToBase64(blob);
-  const res = await fetch("/api/transcribe", {
+  const res = await soulFetch("/api/transcribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1825,7 +2314,7 @@ async function toggleChatMic() {
       text = await recordChatNoteToPc();
     }
     if (!text) {
-      setMode(`${companionLabel()} · ready`);
+      resetIdleUi();
       addBubble("system", "No speech heard — try again, or tap Note.");
       return;
     }
@@ -1837,7 +2326,7 @@ async function toggleChatMic() {
     if (/not-allowed|permission|denied/i.test(msg)) {
       addBubble("system", micBlockedHelp(msg));
       if (chatNoteFile) chatNoteFile.click();
-      setMode(`${companionLabel()} · ready`);
+      resetIdleUi();
       return;
     }
     if (browserSpeechAvailable() && !/too short/i.test(msg)) {
@@ -1852,12 +2341,12 @@ async function toggleChatMic() {
       } catch (err2) {
         addBubble("system", micBlockedHelp(String(err2.message || err2)));
         if (chatNoteFile) chatNoteFile.click();
-        setMode(`${companionLabel()} · ready`);
+        resetIdleUi();
         return;
       }
     }
     addBubble("system", micBlockedHelp(msg));
-    setMode(`${companionLabel()} · ready`);
+    resetIdleUi();
   }
 }
 
@@ -1868,14 +2357,14 @@ async function uploadChatVoiceMemo(file) {
     const text = await transcribeBlob(file, file.name || "voice_memo.m4a");
     if (!text) {
       addBubble("system", "Could not understand that memo — try again.");
-      setMode(`${companionLabel()} · ready`);
+      resetIdleUi();
       return;
     }
     inputEl.value = text;
     await sendChatMessage(text);
   } catch (err) {
     addBubble("system", `Voice memo error: ${err.message || err}`);
-    setMode(`${companionLabel()} · ready`);
+    resetIdleUi();
   }
 }
 
@@ -1911,6 +2400,30 @@ if (menuFamilyBtn) {
     closeSheet(menuDialog);
     await refreshFamily();
     openSheet(familyDialog);
+  });
+}
+if (menuLibraryBtn) {
+  menuLibraryBtn.addEventListener("click", async () => {
+    closeSheet(menuDialog);
+    await openLibraryPanel();
+  });
+}
+if (libraryFeedBtn && libraryFile) {
+  libraryFeedBtn.addEventListener("click", () => libraryFile.click());
+}
+if (libraryRefreshBtn) {
+  libraryRefreshBtn.addEventListener("click", () => refreshLibrary());
+}
+if (libraryCloseBtn && libraryDialog) {
+  libraryCloseBtn.addEventListener("click", () => closeSheet(libraryDialog));
+}
+if (libraryFile) {
+  libraryFile.addEventListener("change", async () => {
+    const file = libraryFile.files && libraryFile.files[0];
+    libraryFile.value = "";
+    if (!file) return;
+    if (libraryDialog && !libraryDialog.open) openSheet(libraryDialog);
+    await uploadLibraryFile(file);
   });
 }
 if (menuInviteBtn) {
@@ -1990,7 +2503,7 @@ if (cloneDemoBtn) {
     cloneStatus.className = "status";
     cloneStatus.textContent = "Building demo sample on PC…";
     try {
-      const res = await fetch("/api/voice/clone/demo", { method: "POST" });
+      const res = await soulFetch("/api/voice/clone/demo", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         throw new Error(data.error || data.message || `HTTP ${res.status}`);
@@ -2011,7 +2524,7 @@ if (cloneClearBtn) {
     cloneStatus.className = "status";
     cloneStatus.textContent = "Clearing…";
     try {
-      const res = await fetch("/api/voice/clone/clear", { method: "POST" });
+      const res = await soulFetch("/api/voice/clone/clear", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         throw new Error(data.error || data.message || `HTTP ${res.status}`);
@@ -2048,11 +2561,13 @@ testBtn.addEventListener("click", async () => {
     settingsStatus.className = "status ok";
     settingsStatus.textContent =
       `OK — ${(models.slice(0, 5).join(", ") || "no models listed")}`;
-    setMode(`Reachable · ${state.settings.ollamaModel}`);
+    setConnectionStatus("online", `Connected · ${state.settings.ollamaModel}`);
+    setMode("");
   } catch (err) {
     settingsStatus.className = "status err";
     settingsStatus.textContent = String(err.message || err);
-    setMode("Unreachable");
+    setConnectionStatus("offline", "Unreachable");
+    setMode("");
   }
 });
 
@@ -2150,7 +2665,7 @@ googleDisconnectBtn.addEventListener("click", async () => {
   settingsStatus.className = "status";
   settingsStatus.textContent = "Disconnecting…";
   try {
-    await fetch("/api/google/disconnect", { method: "POST" });
+    await soulFetch("/api/google/disconnect", { method: "POST" });
     await refreshGoogleLine();
     settingsStatus.className = "status ok";
     settingsStatus.textContent = "Google disconnected on this PC.";
@@ -2172,7 +2687,7 @@ if (driveNoteBtn) {
     if (text == null || !String(text).trim()) return;
     const title = prompt("File title:", "Soul note") || "Soul note";
     try {
-      const res = await fetch("/api/google/drive", {
+      const res = await soulFetch("/api/google/drive", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "save", title, body: text }),
@@ -2207,6 +2722,7 @@ settingsForm.addEventListener("submit", (e) => {
   e.preventDefault();
   state.settings = saveSettings({
     ollamaUrl: urlInput.value,
+    brainUrl: brainUrlInput ? brainUrlInput.value : state.settings.brainUrl,
     ollamaModel: modelInput.value,
     companionName: nameInput.value,
     tone: toneInput.value,
@@ -2216,6 +2732,9 @@ settingsForm.addEventListener("submit", (e) => {
       ? kokoroVoiceInput.value
       : DEFAULTS.kokoroVoice,
     voiceEngine: voiceEngineInput ? voiceEngineInput.value : "natural",
+    storytellerName: storytellerNameInput
+      ? storytellerNameInput.value
+      : DEFAULTS.storytellerName,
     voiceTempo: voiceTempoInput ? voiceTempoInput.value : 0,
     voicePitch: voicePitchInput ? voicePitchInput.value : 0,
     theme: themeSelect ? themeSelect.value : "auto",
@@ -2224,9 +2743,10 @@ settingsForm.addEventListener("submit", (e) => {
   localStorage.setItem(STORAGE_KEY + ":tone_set", "1");
   applyBrand();
   pushProfileToPc();
+  syncWidgetPresence("idle");
   settingsStatus.className = "status ok";
   settingsStatus.textContent = "Saved locally + synced to PC profile.";
-  setMode(`${companionLabel()} · saved`);
+  resetIdleUi();
   closeSheet(dialog);
 });
 
@@ -2239,7 +2759,7 @@ if (memberSelect) {
     if (member && member.has_pin) {
       const pin = prompt(`PIN for ${member.display_name || mid}`) || "";
       try {
-        const res = await fetch("/api/family/auth", {
+        const res = await soulFetch("/api/family/auth", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ member_id: mid, pin }),
@@ -2274,7 +2794,7 @@ if (familySaveBtn) {
   familySaveBtn.addEventListener("click", async () => {
     familyStatus.textContent = "Saving…";
     try {
-      const res = await fetch("/api/family", {
+      const res = await soulFetch("/api/family", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2300,7 +2820,7 @@ if (memberAddBtn) {
   memberAddBtn.addEventListener("click", async () => {
     familyStatus.textContent = "Saving member…";
     try {
-      const res = await fetch("/api/family/member", {
+      const res = await soulFetch("/api/family/member", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2326,7 +2846,7 @@ if (memberAddBtn) {
 if (boardAddBtn) {
   boardAddBtn.addEventListener("click", async () => {
     try {
-      const res = await fetch("/api/family/board", {
+      const res = await soulFetch("/api/family/board", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2349,7 +2869,7 @@ if (boardAddBtn) {
 if (reminderAddBtn) {
   reminderAddBtn.addEventListener("click", async () => {
     try {
-      const res = await fetch("/api/family/reminder", {
+      const res = await soulFetch("/api/family/reminder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2376,18 +2896,18 @@ window.addEventListener("online", async () => {
     // Drain any queued offline messages first
     const q = JSON.parse(localStorage.getItem("usa_offline_queue") || "[]");
     for (const item of q) {
-      await fetch("/api/offline/queue", {
+      await soulFetch("/api/offline/queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(item),
       });
     }
     localStorage.removeItem("usa_offline_queue");
-    await fetch("/api/offline/drain", { method: "POST" });
+    await soulFetch("/api/offline/drain", { method: "POST" });
     await refreshOfflinePack();
     await probe();
     setOfflineUi(false);
-    setMode(`${companionLabel()} · ready`);
+    resetIdleUi();
     addBubble(
       "system",
       "Back online — PC brain reachable again. Offline queue synced."
@@ -2395,12 +2915,12 @@ window.addEventListener("online", async () => {
   } catch {
     // Network says online but PC/LAN not ready yet — stay degraded, retry soon
     setOfflineUi(true);
-    setMode(`${companionLabel()} · reconnecting…`);
+    setMode("Reconnecting…");
     setTimeout(async () => {
       try {
         await probe();
         setOfflineUi(false);
-        setMode(`${companionLabel()} · ready`);
+        resetIdleUi();
         addBubble("system", "Reconnected to PC brain.");
       } catch {
         /* still waiting for Wi‑Fi / server */
@@ -2410,11 +2930,11 @@ window.addEventListener("online", async () => {
 });
 window.addEventListener("offline", () => {
   setOfflineUi(true);
-  setMode(`${companionLabel()} · offline light`);
+  setMode("Offline light");
 });
 
 async function createInvite(role, hint, target) {
-  const res = await fetch("/api/family/invite", {
+  const res = await soulFetch("/api/family/invite", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2489,7 +3009,7 @@ async function runOnboardNext() {
     });
     applyBrand();
     await pushProfileToPc();
-    await fetch("/api/family", {
+    await soulFetch("/api/family", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2525,7 +3045,7 @@ async function openJoinFromUrl() {
   if (!token || !joinInvite) return false;
   pendingInviteToken = token;
   try {
-    const res = await fetch(`/api/family/invite?token=${encodeURIComponent(token)}`);
+    const res = await soulFetch(`/api/family/invite?token=${encodeURIComponent(token)}`);
     const data = await res.json();
     if (!data.ok) {
       joinHint.textContent = data.error || "Invite invalid";
@@ -2630,7 +3150,7 @@ if (joinSubmit) {
   joinSubmit.addEventListener("click", async () => {
     joinStatus.textContent = "Linking…";
     try {
-      const res = await fetch("/api/family/invite/redeem", {
+      const res = await soulFetch("/api/family/invite/redeem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2670,6 +3190,7 @@ async function boot() {
   initAudioUnlock();
   initSettingsTabs();
   initStarterChips();
+  initFloatingDock();
   applyBrand();
   noteGoogleReturn();
   const joining = await openJoinFromUrl();
@@ -2691,28 +3212,22 @@ async function boot() {
       }
     }
   }
-  setMode(`${companionLabel()} · checking`);
+  setConnectionStatus("checking", "Checking…");
   await refreshVoiceLine();
   await refreshGoogleLine();
   await loadToolChips();
   await refreshFamily();
   await refreshOfflinePack();
   await syncSharedHistory();
+  renderFromHistory();
   setOfflineUi(!navigator.onLine);
-  syncChatEmpty();
+  syncCanvasEmpty();
   try {
     await probe();
-    setMode(`${companionLabel()} · ready`);
-    if (state.history.length) {
-      addBubble(
-        "system",
-        `Shared memory: ${state.history.length} recent turns. Continue anytime.`
-      );
-    }
-    // Fresh chat keeps the empty hero ("Say hello…") until the first message.
+    setConnectionStatus("online", "On your LAN");
+    setMode("");
   } catch (err) {
     setOfflineUi(true);
-    setMode("Offline light / open Settings");
     addBubble(
       "system",
       `PC brain unreachable (${err.message}). Limited offline replies until LAN + Ollama are up.`
@@ -2721,7 +3236,18 @@ async function boot() {
 
   if ("serviceWorker" in navigator) {
     try {
-      await navigator.serviceWorker.register("./sw.js");
+      const reg = await navigator.serviceWorker.register("./sw.js");
+      // Pull the latest worker immediately so new code activates without a
+      // manual unregister.
+      reg.update().catch(() => {});
+      // When a new worker takes control, reload once so the fresh app shell
+      // runs (prevents a stale worker from stranding the tab offline).
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloaded) return;
+        reloaded = true;
+        window.location.reload();
+      });
     } catch {
       /* optional */
     }

@@ -24,7 +24,10 @@
         <span class="mark" aria-hidden="true"></span>
         <div class="brand-text">
           <h1 id="brandName">Universal Soul</h1>
-          <p id="modeLine" class="sub">Ready</p>
+          <p id="modeLine" class="sub">
+            <span id="connectionDot" class="conn-dot" data-state="checking" aria-hidden="true"></span>
+            <span id="connectionLabel">Checking…</span>
+          </p>
         </div>
       </div>
       <button type="button" id="menuBtn" class="icon-btn menu-btn" aria-label="Open menu" title="Menu">
@@ -34,10 +37,7 @@
       </button>
     </header>
 
-    <div id="statusStrip" class="status-strip" hidden>
-      <span class="status-strip-dot" aria-hidden="true"></span>
-      <span id="statusStripText">Ready</span>
-    </div>
+    <div class="progress-line" id="progressLine" hidden aria-hidden="true"></div>
 
     <div class="toast-stack" id="toastStack">
       <div id="googleBanner" class="google-banner" hidden>
@@ -57,44 +57,74 @@
       </div>
     </div>
 
-    <main id="chat" class="chat" aria-live="polite">
-      <div id="chatEmpty" class="chat-empty">
-        <p class="chat-empty-title">
-          Say hello to <span id="emptyName">Universal Soul</span>
-        </p>
+    <main id="canvas" class="canvas" aria-live="polite">
+      <section class="presence-zone">
+        <div id="presenceOrb" class="presence-orb" data-state="idle" data-emotion="idle" aria-hidden="true">
+          <span class="presence-ring"></span>
+          <span class="presence-core">
+            <span class="face" aria-hidden="true">
+              <span class="eye left"><span class="pupil"></span></span>
+              <span class="eye right"><span class="pupil"></span></span>
+              <span class="mouth"></span>
+            </span>
+          </span>
+        </div>
+        <p id="activityLabel" class="activity-label" hidden role="status"></p>
+      </section>
+
+      <section id="responseZone" class="response-zone">
+        <div id="responseSkeleton" class="response-skeleton" hidden aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <article id="responseCard" class="response-card" hidden>
+          <div id="responseText" class="response-text"></div>
+          <div id="responseTools" class="response-tools"></div>
+        </article>
+        <p id="systemNotice" class="system-notice" hidden role="status"></p>
+      </section>
+
+      <p id="lastUserLine" class="last-user-line" hidden></p>
+
+      <div id="chatEmpty" class="canvas-empty">
+        <p class="canvas-empty-title">What's on your mind?</p>
         <p class="hint">Private companion on your LAN — voice, memory, family.</p>
-        <div id="starterChips" class="starter-chips" aria-label="Suggested prompts">
-          <button type="button" data-prompt="Hi">Hi</button>
-          <button type="button" data-prompt="What's the weather in London?">Weather</button>
-          <button type="button" data-prompt="Remind me at 6pm to call home">Remind me</button>
-          <button type="button" data-prompt="Draft a short friendly email">Draft email</button>
+        <div id="starterChips" class="action-grid" aria-label="Suggested prompts">
+          <button type="button" data-prompt="Hi" data-icon="👋">Hi</button>
+          <button type="button" data-prompt="What's the weather in London?" data-icon="☀">Weather</button>
+          <button type="button" data-prompt="Remind me at 6pm to call home" data-icon="⏰">Remind me</button>
+          <button type="button" data-prompt="Draft a short friendly email" data-icon="✉">Draft email</button>
         </div>
       </div>
+
+      <details id="threadHistory" class="thread-history" hidden>
+        <summary>Earlier in this conversation</summary>
+        <div id="threadList" class="thread-list"></div>
+      </details>
     </main>
 
-    <div id="toolChips" class="tool-chips" aria-label="Quick tools"></div>
-
-    <form id="composer" class="composer" autocomplete="off">
-      <button type="button" id="chatMicBtn" class="icon-btn ghost mic-btn" aria-label="Voice note" title="Tap to talk">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2"/>
-          <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-      </button>
-      <input id="message" type="text" placeholder="Message…" enterkeyhint="send" />
-      <button type="button" id="chatNoteBtn" class="icon-btn ghost mic-btn" aria-label="Attach voice memo" title="Attach voice memo">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-          <path d="M14 3v5h5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-        </svg>
-      </button>
-      <button type="submit" id="sendBtn" class="icon-btn send-btn" aria-label="Send" title="Send">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 19V5M12 5l-5 5M12 5l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-      <input id="chatNoteFile" type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.aac" hidden />
-    </form>
+    <div class="dock-wrap">
+      <div id="toolChips" class="tool-menu" hidden aria-label="Quick tools"></div>
+      <form id="composer" class="composer-dock" autocomplete="off">
+        <div class="dock-inner" id="dockInner">
+          <button type="button" id="dockToolsBtn" class="dock-btn ghost" aria-label="Tools" title="Tools">+</button>
+          <input id="message" type="text" placeholder="Ask anything…" enterkeyhint="send" autocomplete="off" />
+          <button type="button" id="chatMicBtn" class="dock-btn mic-btn" aria-label="Talk" title="Tap to talk">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2"/>
+              <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button type="submit" id="sendBtn" class="dock-btn send-btn" aria-label="Send" title="Send" hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 12h14M13 5l6 7-6 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+        <button type="button" id="chatNoteBtn" hidden aria-hidden="true" tabindex="-1"></button>
+        <input id="chatNoteFile" type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.aac" hidden />
+        <input id="libraryFile" type="file" accept=".pdf,.txt,.md,.markdown,text/plain,application/pdf" hidden />
+      </form>
+    </div>
   </div>
 
   <dialog id="menuDialog">
@@ -107,6 +137,7 @@
       </label>
       <div class="menu-actions">
         <button type="button" id="menuFamilyBtn" class="menu-item">Family &amp; household</button>
+        <button type="button" id="menuLibraryBtn" class="menu-item">Family library</button>
         <button type="button" id="menuInviteBtn" class="menu-item">Invite device (QR)</button>
         <button type="button" id="menuSettingsBtn" class="menu-item">Settings</button>
       </div>
@@ -293,9 +324,18 @@
               <option value="natural">Natural (Kokoro — offline, fast)</option>
               <option value="fast">Fast (Jenny / Edge neural)</option>
               <option value="authentic">Authentic (your cloned voice)</option>
+              <option value="storyteller">Storyteller (your clone, slightly shifted)</option>
               <option value="auto">Auto — your voice, fast fallback if it lags</option>
             </select>
           </label>
+          <label>
+            Storyteller name (your label only)
+            <input id="storytellerName" name="storytellerName" maxlength="40" placeholder="e.g. Bedtime Bear" />
+          </label>
+          <p class="hint">
+            Storyteller uses <b>your</b> local clone with a mild pitch shift so it feels like a
+            character — never an actor/celebrity name.
+          </p>
           <label>
             Natural voice (Kokoro)
             <select id="kokoroVoice" name="kokoroVoice">
@@ -340,6 +380,15 @@
         </div>
 
         <div class="settings-panel" data-panel="connection" hidden>
+          <label>
+            PC brain URL (APK / off-origin)
+            <input id="brainUrl" name="brainUrl" placeholder="http://192.168.0.101:8765" />
+          </label>
+          <p class="hint">
+            Required in the Android app: your PC running
+            <code>python scripts/serve_pwa.py --host 0.0.0.0 --port 8765</code>.
+            Leave empty when using the browser PWA on the same host.
+          </p>
           <label>
             Ollama URL / host
             <input id="ollamaUrl" name="ollamaUrl" placeholder="192.168.1.10 or http://127.0.0.1:11434" />
@@ -429,6 +478,48 @@
         <button type="button" id="gmailSendBtn">Send</button>
         <button type="submit" class="ghost" value="cancel">Close</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="libraryDialog">
+    <form method="dialog" id="libraryForm" class="settings">
+      <h2>Family library</h2>
+      <p class="hint">
+        Feed books and documents into the PC knowledge base. Ask in chat to summarize,
+        quote, or read aloud. Private items stay with the uploader.
+      </p>
+      <label>
+        Title (optional)
+        <input id="libraryTitle" maxlength="160" placeholder="e.g. Atomic Habits" />
+      </label>
+      <label>
+        Visibility
+        <select id="libraryVisibility">
+          <option value="family">Shared with family</option>
+          <option value="private">Private to me</option>
+        </select>
+      </label>
+      <label>
+        Tags
+        <select id="libraryTags" multiple size="4" aria-label="Document tags">
+          <option value="parenting">parenting</option>
+          <option value="support">support</option>
+          <option value="bedtime">bedtime</option>
+          <option value="kids">kids</option>
+          <option value="story">story</option>
+          <option value="general">general</option>
+        </select>
+      </label>
+      <p class="hint">Tip: tag parenting books so “how do I support …” finds them.</p>
+      <div class="row-actions">
+        <button type="button" id="libraryFeedBtn" class="primary-btn">Feed document</button>
+        <button type="button" id="libraryRefreshBtn" class="ghost">Refresh</button>
+      </div>
+      <p id="libraryStatus" class="status" role="status"></p>
+      <div id="libraryList" class="library-list" aria-live="polite"></div>
+      <menu>
+        <button type="button" id="libraryCloseBtn" class="ghost" value="cancel">Close</button>
+      </menu>
     </form>
   </dialog>
 

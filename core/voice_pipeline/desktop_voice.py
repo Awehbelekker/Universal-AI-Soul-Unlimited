@@ -213,6 +213,8 @@ def spoken_passage(text: str, max_chars: int = 480) -> str:
     parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", s) if p.strip()]
     if not parts:
         return clip_for_speech(s, max_chars=max_chars)
+    # Longer library summaries: allow more sentences when budget is high
+    max_sentences = 10 if max_chars <= 800 else min(48, max(12, max_chars // 60))
     kept: list[str] = []
     total = 0
     for part in parts:
@@ -221,7 +223,7 @@ def spoken_passage(text: str, max_chars: int = 480) -> str:
             break
         kept.append(part)
         total += add
-        if len(kept) >= 10:
+        if len(kept) >= max_sentences:
             break
     if not kept:
         return clip_for_speech(parts[0], max_chars=max_chars)
@@ -310,6 +312,42 @@ _EMOTION_BIAS = {
     "gentle": {"rate": -6, "pitch": -1},
     "neutral": {"rate": 0, "pitch": 0},
 }
+
+# Storyteller: slight character shift of the parent's own clone (never celebrity labels).
+STORYTELLER_RATE_BIAS = -8  # a touch slower for bedtime
+STORYTELLER_PITCH_BIAS = 5  # Edge path
+STORYTELLER_WAV_RATE_FACTOR = 1.07  # mild higher pitch+tempo on clone WAV
+
+
+def storyteller_shift_wav(
+    wav_bytes: bytes, *, rate_factor: float = STORYTELLER_WAV_RATE_FACTOR
+) -> bytes:
+    """Mild pitch/tempo shift on a WAV so the parent's clone sounds distinct.
+
+    Uses frame-rate rewrite (no celebrity models). Safe no-op on bad input.
+    """
+    import io
+    import wave
+
+    if not wav_bytes or len(wav_bytes) < 44:
+        return wav_bytes
+    factor = float(rate_factor or 1.0)
+    if abs(factor - 1.0) < 0.01:
+        return wav_bytes
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as src:
+            params = src.getparams()
+            frames = src.readframes(src.getnframes())
+            rate = src.getframerate()
+        new_rate = max(8000, min(96000, int(rate * factor)))
+        out = io.BytesIO()
+        with wave.open(out, "wb") as dst:
+            dst.setparams(params)
+            dst.setframerate(new_rate)
+            dst.writeframes(frames)
+        return out.getvalue()
+    except Exception:
+        return wav_bytes
 
 
 def _xml_escape(s: str) -> str:
@@ -1082,17 +1120,28 @@ class DesktopVoiceService:
         if not mode and force_edge:
             mode = "fast"
 
+        storyteller = mode == "storyteller"
+        if storyteller:
+            # Prefer parent's own XTTS clone, then Edge with storyteller biases.
+            mode = "authentic"
+            if rate_bias is None:
+                rate_bias = STORYTELLER_RATE_BIAS
+            if pitch_bias is None:
+                pitch_bias = STORYTELLER_PITCH_BIAS
+
         # Natural (Kokoro) — natural + offline. Preferred mobile default.
         if mode == "natural" and self._kokoro_available:
             data = await self._synth_kokoro_bytes(spoken, voice_id=voice_id)
             if data:
                 return data, "audio/wav"
 
-        # Authentic (XTTS clone) — explicit request or legacy default.
+        # Authentic (XTTS clone) — explicit request, storyteller, or legacy default.
         want_clone = mode == "authentic" or (mode == "" and not force_edge)
         if want_clone and self.clone_wav and self._coqui_available:
             data = await self._synth_clone_bytes(spoken)
             if data:
+                if storyteller:
+                    data = storyteller_shift_wav(data)
                 return data, "audio/wav"
 
         # Fast (Edge neural) — explicit fast/legacy edge path, or fallback.

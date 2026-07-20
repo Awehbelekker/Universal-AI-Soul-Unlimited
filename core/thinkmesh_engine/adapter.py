@@ -1,24 +1,31 @@
 """
-ThinkMesh Adapter (local thinkmesh_core + HRM fallback)
-========================================================
+ThinkMesh Adapter
+=================
 
-Uses a real planner → critic → synthesizer multi-pass over HRM/Ollama when
-deep routing asks for ThinkMesh. Optional external ``thinkmesh`` package and
-local orchestrator remain available; simulated agent sleep is no longer the
-product path.
+Product path for deep reasoning:
+  1. External ``thinkmesh`` package (DeepConf / debate / self_consistency / tree)
+     via Ollama — preferred when installed
+  2. Local planner → critic → synthesizer multipass over HRM/Ollama — fallback
+  3. thinkmesh_core orchestrator / HRM brief — last resort
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from core.config import get_config
 from core.engines.hrm_engine import HRMEngine
 from core.interfaces.data_structures import PersonalityMode, UserContext
 
 logger = logging.getLogger(__name__)
+
+_STRATEGY_NAMES = frozenset(
+    {"deepconf", "debate", "self_consistency", "tree", "graph"}
+)
 
 
 @dataclass
@@ -28,17 +35,32 @@ class ThinkResult:
     meta: Dict[str, Any] = field(default_factory=dict)
 
 
+def map_strategy_name(text: str) -> str:
+    """Map task text to a real ThinkMesh strategy name."""
+    lw = (text or "").lower()
+    if any(k in lw for k in ("compare", "debate", "tradeoff", "versus", "vs ", " or ")):
+        return "debate"
+    if any(
+        k in lw
+        for k in ("prove", "architect", "multi-step", "orchestrate", "design system")
+    ):
+        return "tree"
+    if any(k in lw for k in ("analyze", "evaluate", "synthesize", "complex", "think about")):
+        return "deepconf"
+    return "self_consistency"
+
+
 class ThinkMeshAdapter:
-    """Facade for ThinkMesh with real multi-pass reasoning + HRM fallback."""
+    """Facade: real ThinkMesh strategies first, multipass/HRM fallback."""
 
     def __init__(self) -> None:
         self._available = False
         self._uses_local_core = False
+        self._uses_package = False
         self._hrm = HRMEngine()
         self._config = get_config()
         self._orchestrator = None
 
-        # Optional external thinkmesh package
         self._ThinkConfig = None
         self._ModelSpec = None
         self._StrategySpec = None
@@ -47,7 +69,22 @@ class ThinkMeshAdapter:
     async def initialize(self) -> None:
         await self._hrm.initialize()
 
-        # Prefer local thinkmesh_core orchestrator (with real executor)
+        # Prefer external ThinkMesh package (Desktop install)
+        try:
+            import importlib
+
+            tm = importlib.import_module("thinkmesh")
+            self._think = getattr(tm, "think")
+            self._ThinkConfig = getattr(tm, "ThinkConfig")
+            self._ModelSpec = getattr(tm, "ModelSpec")
+            self._StrategySpec = getattr(tm, "StrategySpec")
+            self._uses_package = True
+            self._available = True
+            logger.info("ThinkMesh package available (Ollama strategies enabled)")
+        except Exception as e:
+            logger.debug("thinkmesh package unavailable: %s", e)
+            self._uses_package = False
+
         try:
             from thinkmesh_core.orchestration.orchestrator import (
                 ThinkMeshOrchestrator,
@@ -64,20 +101,7 @@ class ThinkMeshAdapter:
             self._orchestrator = None
             self._uses_local_core = False
 
-        # Optional external package
-        try:
-            import importlib
-
-            tm = importlib.import_module("thinkmesh")
-            self._think = getattr(tm, "think")
-            self._ThinkConfig = getattr(tm, "ThinkConfig")
-            self._ModelSpec = getattr(tm, "ModelSpec")
-            self._StrategySpec = getattr(tm, "StrategySpec")
-            self._available = True
-        except Exception:
-            pass
-
-        # Multi-pass works whenever HRM is up
+        # Multipass always works when HRM is up
         self._available = True
 
     async def _register_default_agents(self) -> None:
@@ -141,8 +165,40 @@ class ThinkMeshAdapter:
     def uses_local_core(self) -> bool:
         return self._uses_local_core
 
+    @property
+    def uses_package(self) -> bool:
+        return self._uses_package
+
+    def _default_ollama_base(self) -> str:
+        raw = (
+            getattr(self._config, "ollama_url", None)
+            or getattr(getattr(self._config, "hrm", None), "ollama_url", None)
+            or "http://127.0.0.1:11434"
+        )
+        u = str(raw).rstrip("/")
+        if u.endswith("/v1"):
+            return u
+        # ThinkMesh Ollama adapter expects OpenAI-compatible /v1 base
+        parsed = urlparse(u if "://" in u else f"http://{u}")
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 11434
+        return f"http://{host}:{port}/v1"
+
+    def _default_model_name(self) -> str:
+        for attr in ("ollama_model", "default_model", "model"):
+            val = getattr(self._config, attr, None)
+            if val:
+                return str(val)
+        hrm = getattr(self._config, "hrm", None)
+        if hrm is not None:
+            for attr in ("model", "ollama_model"):
+                val = getattr(hrm, attr, None)
+                if val:
+                    return str(val)
+        return "llama3.2:3b"
+
     async def think_multipass(self, task: str) -> ThinkResult:
-        """Real planner → critic → synthesizer passes via HRM/Ollama."""
+        """Planner → critic → synthesizer via HRM/Ollama (fallback path)."""
         steps: List[Dict[str, str]] = []
 
         plan = await self._hrm_brief(
@@ -179,6 +235,107 @@ class ThinkMeshAdapter:
             },
         )
 
+    async def think_package(
+        self,
+        task: str,
+        *,
+        strategy: Optional[str] = None,
+        parallel: Optional[int] = None,
+        max_steps: Optional[int] = None,
+        backend: Optional[str] = None,
+        model_name: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        ollama_base_url: Optional[str] = None,
+    ) -> ThinkResult:
+        """Run a real ThinkMesh strategy (DeepConf / debate / SC / tree)."""
+        if not (
+            self._think
+            and self._ThinkConfig
+            and self._ModelSpec
+            and self._StrategySpec
+        ):
+            raise RuntimeError("thinkmesh package not loaded")
+
+        backend = backend or "ollama"
+        model_name = model_name or self._default_model_name()
+        max_tokens = max_tokens or 256
+        temperature = 0.6 if temperature is None else temperature
+        raw_strategy = (strategy or map_strategy_name(task)).strip().lower()
+        if raw_strategy not in _STRATEGY_NAMES:
+            raw_strategy = map_strategy_name(task)
+        # Keep PWA deep path snappy on small local models
+        if parallel is None:
+            parallel = 3 if raw_strategy in ("self_consistency", "deepconf") else 2
+        max_steps = max_steps or (2 if raw_strategy in ("deepconf", "debate", "tree") else 1)
+
+        extra: Dict[str, Any] = {"batch_size": min(parallel, 4)}
+        if backend == "ollama":
+            extra["base_url"] = ollama_base_url or self._default_ollama_base()
+            extra["use_thinking"] = False  # small chat models; avoid think token burn
+        elif backend == "transformers":
+            extra["device"] = "auto"
+
+        strategy_kwargs: Dict[str, Any] = {
+            "name": raw_strategy,
+            "parallel": parallel,
+            "max_steps": max_steps,
+        }
+        if raw_strategy == "deepconf":
+            strategy_kwargs["deepconf"] = {
+                "k": min(5, parallel),
+                "tau_low": -1.25,
+                "tau_ent": 2.2,
+                "realloc_top_p": 0.4,
+            }
+        elif raw_strategy == "debate":
+            strategy_kwargs["debate"] = {"rounds": 2}
+        elif raw_strategy == "tree":
+            strategy_kwargs["tree"] = {"branches": 2, "depth": 2}
+
+        cfg = self._ThinkConfig(
+            model=self._ModelSpec(
+                backend=backend,
+                model_name=model_name,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                extra=extra,
+            ),
+            strategy=self._StrategySpec(**strategy_kwargs),
+            reducer={"name": "majority"},
+            budgets={"wall_clock_s": 45, "tokens": 3500},
+        )
+
+        import asyncio as _asyncio
+
+        # thinkmesh.think() wraps Orchestrator.run in asyncio.run(), which
+        # fails when we are already inside an event loop — call run() directly.
+        try:
+            from thinkmesh.orchestrator import Orchestrator
+        except ImportError:
+            Orchestrator = None  # type: ignore
+
+        if Orchestrator is not None:
+            ans = await Orchestrator(cfg).run(task)
+        else:
+            ans = self._think(task, cfg)
+            if _asyncio.iscoroutine(ans):
+                ans = await ans
+        meta = dict(getattr(ans, "meta", None) or {})
+        meta.update(
+            {
+                "engine": "thinkmesh_package",
+                "strategy": raw_strategy,
+                "backend": backend,
+                "model": model_name,
+            }
+        )
+        return ThinkResult(
+            content=(getattr(ans, "content", None) or str(ans) or "").strip(),
+            confidence=float(getattr(ans, "confidence", 0.7) or 0.7),
+            meta=meta,
+        )
+
     async def think(
         self,
         task: str,
@@ -190,59 +347,51 @@ class ThinkMeshAdapter:
         model_name: Optional[str] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        multipass: bool = True,
+        multipass: bool = False,
+        ollama_base_url: Optional[str] = None,
+        prefer_package: bool = True,
     ) -> ThinkResult:
-        """Run thinking: multipass (product), external package, orchestrator, HRM."""
-        # Product path first: real multi-pass over local HRM/Ollama
-        if multipass:
+        """Run thinking: package strategies → multipass → orchestrator → HRM."""
+        # 1) Real ThinkMesh strategies (preferred)
+        if prefer_package and self._uses_package and not multipass:
+            try:
+                return await self.think_package(
+                    task,
+                    strategy=strategy,
+                    parallel=parallel,
+                    max_steps=max_steps,
+                    backend=backend or "ollama",
+                    model_name=model_name,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    ollama_base_url=ollama_base_url,
+                )
+            except Exception as e:
+                logger.warning("ThinkMesh package path failed: %s", e)
+
+        # 2) Multipass fallback (or explicit multipass=True)
+        if multipass or prefer_package:
             try:
                 return await self.think_multipass(task)
             except Exception as e:
                 logger.warning("ThinkMesh multipass failed: %s", e)
 
-        if (
-            self._think
-            and self._ThinkConfig
-            and self._ModelSpec
-            and self._StrategySpec
-        ):
-            backend = backend or "transformers"
-            model_name = model_name or "Qwen2.5-7B-Instruct"
-            max_tokens = max_tokens or 256
-            temperature = temperature if temperature is not None else 0.7
-            strategy = strategy or "deepconf"
-            parallel = parallel or 6
-            max_steps = max_steps or 2
-
-            cfg = self._ThinkConfig(
-                model=self._ModelSpec(
-                    backend=backend,
+        # 3) Retry package if multipass was forced first and failed
+        if prefer_package and self._uses_package and multipass:
+            try:
+                return await self.think_package(
+                    task,
+                    strategy=strategy,
+                    parallel=parallel,
+                    max_steps=max_steps,
+                    backend=backend or "ollama",
                     model_name=model_name,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    extra={"device": "auto"},
-                ),
-                strategy=self._StrategySpec(
-                    name=strategy,
-                    parallel=parallel,
-                    max_steps=max_steps,
-                ),
-                reducer={"name": "majority"},
-                budgets={"wall_clock_s": 20, "tokens": 4000},
-            )
-            try:
-                import asyncio as _asyncio
-
-                ans = self._think(task, cfg)
-                if _asyncio.iscoroutine(ans):
-                    ans = await ans
-                return ThinkResult(
-                    content=ans.content,
-                    confidence=float(ans.confidence),
-                    meta=ans.meta,
+                    ollama_base_url=ollama_base_url,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("package after multipass also failed: %s", e)
 
         if self._orchestrator:
             try:
@@ -294,17 +443,7 @@ class ThinkMeshAdapter:
         )
 
     async def recommend_strategy(self, text: str) -> Dict[str, Any]:
-        """Lightweight strategy recommendation from task text."""
-        lw = text.lower()
-        if any(
-            k in lw
-            for k in ["prove", "synthesize", "plan", "orchestrate", "complex"]
-        ):
-            return {"name": "HYBRID", "confidence": 0.7}
-        if any(k in lw for k in ["compare", "debate", "tradeoff", "versus"]):
-            return {"name": "PARALLEL", "confidence": 0.65}
-        if any(
-            k in lw for k in ["step", "sequence", "simple", "list", "summarize"]
-        ):
-            return {"name": "SEQUENTIAL", "confidence": 0.6}
-        return {"name": "ADAPTIVE", "confidence": 0.55}
+        """Recommend a real ThinkMesh strategy name for the task."""
+        name = map_strategy_name(text)
+        conf = 0.7 if name != "self_consistency" else 0.6
+        return {"name": name, "confidence": conf, "engine": "thinkmesh"}

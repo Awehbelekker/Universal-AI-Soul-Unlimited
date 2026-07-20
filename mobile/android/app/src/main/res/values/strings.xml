@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Universal Soul</string>
+    <string name="title_activity_main">Universal Soul</string>
+    <string name="package_name">com.universalsoul.companion</string>
+    <string name="custom_url_scheme">com.universalsoul.companion</string>
+    <string name="widget_description">Companion face with emotion eyes — tap to open Soul</string>
+    <string name="widget_face_desc">Companion presence</string>
+    <string name="widget_status_idle">idle</string>
+</resources>

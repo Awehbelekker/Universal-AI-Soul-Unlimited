@@ -12,6 +12,7 @@ class TaskMode(Enum):
     FAST = "fast"
     STANDARD = "standard"
     DEEP = "deep"
+    LIVE_FACT = "live_fact"
 
 
 @dataclass
@@ -21,6 +22,7 @@ class RouteDecision:
     max_tokens: int
     use_automation: bool
     use_thinkmesh: bool
+    needs_research: bool = False
 
 
 _AUTOMATION_KEYWORDS = (
@@ -67,11 +69,29 @@ def classify_request(
             max_tokens=fast_tokens,
             use_automation=False,
             use_thinkmesh=False,
+            needs_research=False,
         )
 
     lw = text.lower().strip()
     words = lw.split()
     word_count = len(words)
+
+    # Live facts first — research, don't deep-think a sports score.
+    try:
+        from core.integrations.wow_tools import needs_live_research
+
+        live = needs_live_research(text)
+    except Exception:
+        live = False
+    if live:
+        return RouteDecision(
+            mode=TaskMode.LIVE_FACT,
+            reasoning_depth=1,
+            max_tokens=fast_tokens,
+            use_automation=False,
+            use_thinkmesh=False,
+            needs_research=True,
+        )
 
     if any(k in lw for k in _MEMORY_KEYWORDS) and word_count < 25:
         return RouteDecision(

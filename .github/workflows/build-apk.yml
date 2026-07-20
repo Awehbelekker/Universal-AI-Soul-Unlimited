@@ -1,60 +1,68 @@
-name: Build Android APK
+name: Build Capacitor Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, master]
+    paths:
+      - "mobile/**"
+      - "web/**"
+      - ".github/workflows/build-apk.yml"
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
-    timeout-minutes: 90
-    
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
     steps:
-    - uses: actions/checkout@v3
-      
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-        
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          git zip unzip openjdk-11-jdk \
-          autoconf libtool pkg-config \
-          zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 \
-          cmake libffi-dev libssl-dev \
-          build-essential ccache \
-          libltdl-dev libffi-dev libssl-dev python3-dev
-        
-    - name: Install Python dependencies
-      run: |
-        pip install --upgrade pip setuptools wheel
-        pip install --upgrade cython==0.29.36
-        pip install --upgrade buildozer
-        pip install --upgrade git+https://github.com/kivy/python-for-android.git@develop
-        
-    - name: Cache buildozer global directory
-      uses: actions/cache@v3
-      with:
-        path: ~/.buildozer
-        key: buildozer-global-${{ hashFiles('buildozer.spec') }}
-        
-    - name: Cache buildozer directory
-      uses: actions/cache@v3
-      with:
-        path: .buildozer
-        key: buildozer-${{ hashFiles('buildozer.spec') }}
-        
-    - name: Build APK
-      run: |
-        yes | buildozer -v android debug
-        
-    - name: Upload APK
-      uses: actions/upload-artifact@v3
-      with:
-        name: universal-soul-ai-apk
-        path: bin/*.apk
-        retention-days: 90
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Sync web → Capacitor Android
+        working-directory: mobile
+        run: |
+          npm run sync-www
+          npx cap sync android
+
+      - name: Make gradlew executable
+        working-directory: mobile/android
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: universal-soul-companion-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: Upload mapping (if any)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-logs
+          path: mobile/android/**/build/reports/**
+          if-no-files-found: ignore

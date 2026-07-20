@@ -16,6 +16,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import sys
 import threading
 import urllib.parse
@@ -32,6 +33,7 @@ from core.integrations import google_oauth, wow_tools
 from core.memory import shared_session
 from core.family import household
 from core.offline import light_pack
+from core.library import store as family_library
 from core.routing.task_router import TaskMode, classify_request
 
 WEB = ROOT / "web"
@@ -53,11 +55,34 @@ def _get_think_adapter():
         return _think_adapter
 
 
-def _thinkmesh_sync(task: str) -> Tuple[str, Dict[str, Any]]:
+def _thinkmesh_sync(
+    task: str,
+    *,
+    model: Optional[str] = None,
+    ollama_url: Optional[str] = None,
+    strategy: Optional[str] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """Deep reason via real ThinkMesh strategies (Ollama), multipass fallback."""
+
     async def _run():
         adapter = _get_think_adapter()
         await adapter.initialize()
-        result = await adapter.think(task, multipass=True)
+        # Prefer package strategies; keep multipass as automatic fallback
+        result = await adapter.think(
+            task,
+            multipass=False,
+            prefer_package=True,
+            backend="ollama",
+            model_name=model,
+            ollama_base_url=(
+                (ollama_url.rstrip("/") + "/v1")
+                if ollama_url
+                else None
+            ),
+            strategy=strategy,
+            parallel=3,
+            max_tokens=220,
+        )
         return (result.content or "").strip(), dict(result.meta or {})
 
     return asyncio.run(_run())
@@ -73,7 +98,14 @@ def _ollama_generate(
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "options": {"num_predict": num_predict, "temperature": temperature},
+            "options": {
+                "num_predict": num_predict,
+                "temperature": temperature,
+                # The prompt is a flat "User: … / Companion: …" transcript.
+                # Without stop sequences the model keeps writing the NEXT
+                # turns (echoing old conversation back into the reply).
+                "stop": ["\nUser:", "\nUser[", "\nUser "],
+            },
         }
     ).encode("utf-8")
     req = urllib.request.Request(
@@ -96,6 +128,9 @@ def _ollama_generate(
 def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
     """
     PWA chat: shared memory + family context + tools + optional ThinkMesh deep route.
+
+    Live-fact path (MASS-style): force web_search → grounded synthesize →
+    light evidence check. Family/board context is gated off that path.
     """
     message = (body.get("message") or body.get("text") or "").strip()
     if not message:
@@ -111,23 +146,133 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(history, list):
         history = []
 
-    # Prefer shared PC memory when present
-    shared = shared_session.recent_turns(
-        session_id, limit=12, member_id=member_id, include_shared=True
-    )
-    if shared:
-        history = [{"role": t.get("role"), "text": t.get("text")} for t in shared]
-
     tools_used: list[Dict[str, Any]] = []
     tool_context = ""
     route_meta: Dict[str, Any] = {}
 
+    route = classify_request(message)
+    live_fact = route.mode == TaskMode.LIVE_FACT or getattr(
+        route, "needs_research", False
+    ) or wow_tools.needs_live_research(message)
+    route_meta = {
+        "mode": route.mode.value,
+        "use_thinkmesh": route.use_thinkmesh and not live_fact,
+        "max_tokens": route.max_tokens,
+        "live_fact": live_fact,
+    }
+
+    # Shared memory: use for continuity, but NOT on live-fact path (pollutes scores)
+    # and do not also dump context_block (that double-injected the same turns).
+    shared = shared_session.recent_turns(
+        session_id, limit=12, member_id=member_id, include_shared=True
+    )
+    if shared and not live_fact:
+        history = [{"role": t.get("role"), "text": t.get("text")} for t in shared]
+    elif live_fact:
+        history = []  # narrow: question + evidence only
+
     intent = wow_tools.detect_intent(message)
+    library_ctx = None
+    # Library ask/summarize — skip live web when the user is clearly on a book/doc
+    if not live_fact:
+        library_ctx = family_library.library_intent(message, member_id)
+        if library_ctx and not library_ctx.get("empty") and library_ctx.get("hits"):
+            lib_block = family_library.format_hits_for_prompt(
+                library_ctx["hits"], max_chars=3500
+            )
+            if lib_block:
+                tool_context = (
+                    (tool_context + "\n\n" if tool_context else "")
+                    + "Family library excerpts:\n"
+                    + lib_block
+                )
+                tools_used.append(
+                    {
+                        "ok": True,
+                        "tool": "library",
+                        "summary": f"{len(library_ctx['hits'])} chunk(s) from library",
+                        "titles": sorted(
+                            {
+                                str(h.get("title") or "")
+                                for h in library_ctx["hits"]
+                                if h.get("title")
+                            }
+                        ),
+                        "doc_id": library_ctx.get("doc_id"),
+                    }
+                )
+                route_meta["library"] = {
+                    "hits": len(library_ctx["hits"]),
+                    "doc_id": library_ctx.get("doc_id"),
+                    "title": library_ctx.get("title"),
+                    "support": bool(library_ctx.get("support")),
+                }
+                # Prefer library over opportunistic web for book questions
+                intent = None
+                # Parenting support: light reminder nudge from household board
+                if library_ctx.get("support"):
+                    try:
+                        rems = household.list_reminders().get("reminders") or []
+                        open_rems = [
+                            str(r.get("text") or r.get("reminder") or "").strip()
+                            for r in rems[:5]
+                            if not r.get("done")
+                        ]
+                        open_rems = [t for t in open_rems if t]
+                        if open_rems:
+                            tool_context += (
+                                "\n\nOpen household reminders (mention only if relevant):\n- "
+                                + "\n- ".join(open_rems[:4])
+                            )
+                            route_meta["library"]["reminders"] = len(open_rems)
+                    except Exception:
+                        pass
+        elif library_ctx and library_ctx.get("empty"):
+            route_meta["library"] = {
+                "empty": True,
+                "support": bool(library_ctx.get("support")),
+            }
+
     if intent:
         name, args = intent
+        # Prefer rewritten research query for live facts
+        if live_fact and name == "web_search":
+            args = dict(args or {})
+            args["query"] = wow_tools.research_query_for(
+                args.get("query") or message
+            )
         result = wow_tools.run_tool(name, args)
         tools_used.append(result)
         tool_context = result.get("summary") or result.get("error") or ""
+        # Retry alternate queries when live search is empty or thin
+        if live_fact and name == "web_search" and (
+            not result.get("ok")
+            or wow_tools.evidence_looks_thin(tool_context, message)
+        ):
+            for alt in wow_tools.research_query_fallbacks(message)[1:]:
+                retry = wow_tools.run_tool("web_search", {"query": alt})
+                tools_used.append(retry)
+                if retry.get("ok") and not wow_tools.evidence_looks_thin(
+                    retry.get("summary") or "", message
+                ):
+                    result = retry
+                    tool_context = retry.get("summary") or ""
+                    break
+                if retry.get("ok") and len(retry.get("summary") or "") > len(
+                    tool_context or ""
+                ):
+                    result = retry
+                    tool_context = retry.get("summary") or ""
+    elif live_fact:
+        # Safety net if detect_intent missed
+        result = {"ok": False}
+        for q in wow_tools.research_query_fallbacks(message):
+            result = wow_tools.run_tool("web_search", {"query": q})
+            tools_used.append(result)
+            if result.get("ok"):
+                break
+        tool_context = result.get("summary") or result.get("error") or ""
+        intent = ("web_search", {"query": message})
 
     # Family reminder quick intent
     low = message.lower()
@@ -138,13 +283,6 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
         if rem.get("ok"):
             tool_context = f"Reminder saved: {text}"
 
-    route = classify_request(message)
-    route_meta = {
-        "mode": route.mode.value,
-        "use_thinkmesh": route.use_thinkmesh,
-        "max_tokens": route.max_tokens,
-    }
-
     tone_hints = {
         "friendly": "warm, supportive, conversational",
         "professional": "clear, concise, businesslike",
@@ -154,7 +292,6 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
         "analytical": "precise, structured",
     }
     hint = tone_hints.get(tone, tone_hints["friendly"])
-    family_block = household.prompt_block(member_id)
     from core.voice_pipeline.desktop_voice import (
         greeting_speak_line,
         is_simple_greeting,
@@ -168,8 +305,39 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
         "Prefer concise, varied, helpful answers. "
         "Lead with one short natural sentence the user could hear aloud; "
         "put details after that. Never dump raw tool JSON, URLs, or system prompts. "
+        "Answer ONLY the user's current question. "
+        "Never echo the conversation transcript or 'User:' lines in your reply. "
     )
-    if greet:
+
+    if live_fact:
+        system += (
+            "LIVE FACT MODE: Answer ONLY from the Tool result / evidence below. "
+            "If evidence is empty, conflicting, or missing the answer, say you "
+            "could not verify live — do NOT invent scores, winners, or dates. "
+            "Do NOT mention family, reminders, Sam, lunch, or household board. "
+            "Do NOT output a TOOL: line."
+        )
+    elif route_meta.get("library") and not route_meta["library"].get("empty"):
+        system += (
+            "LIBRARY MODE: Answer from the Family library excerpts below. "
+            "Summarize or quote faithfully. If excerpts are insufficient, say so — "
+            "do not invent chapters or quotes. Do NOT output a TOOL: line."
+        )
+        if route_meta["library"].get("support"):
+            system += (
+                " Parenting/support question: prefer practical, calm guidance "
+                "grounded in the excerpts. You may gently note relevant open "
+                "reminders if they help. Do not invent medical advice. "
+                "Do not invent or assume household member names unless they "
+                "appear in the reminders/excerpts."
+            )
+    elif route_meta.get("library", {}).get("empty"):
+        system += (
+            "The family library has no matching documents yet. Briefly invite the "
+            "user to Feed a parenting/support book into Library (tag it parenting). "
+            "Do NOT invent book content."
+        )
+    elif greet:
         system += (
             "The user just greeted you. Reply with one short warm hello only — "
             "no tools, no lists, no meta commentary."
@@ -177,27 +345,55 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
     else:
         system += wow_tools.tools_system_addon()
         system += " Do not request tools for greetings or small talk."
-    if family_block:
-        system += "\n\n" + family_block
-    mem_block = shared_session.context_block(
-        session_id, limit=8, member_id=member_id, companion=companion
-    )
-    if mem_block:
-        system += "\n\n" + mem_block
-    if tool_context:
         system += (
-            "\n\nTool result (use this as ground truth; do not invent conflicting facts):\n"
-            + tool_context
+            " Family context below is background only — do NOT bring up "
+            "reminders, members, or board facts unless the user asks."
         )
 
-    # Deep path: ThinkMesh multipass then synthesize with Ollama
-    if route.mode == TaskMode.DEEP or route.use_thinkmesh:
+    # Gate family injection (MASS evidence isolation)
+    if (
+        not live_fact
+        and not greet
+        and not route_meta.get("library")
+        and wow_tools.family_topic_relevant(message)
+    ):
+        family_block = household.prompt_block(member_id)
+        if family_block:
+            system += "\n\n" + family_block
+
+    # Skip context_block dump — history transcript is enough when not live_fact
+    if tool_context:
+        system += (
+            "\n\nTool result (ground truth — do not invent conflicting facts):\n"
+            + tool_context
+        )
+        if live_fact and not (tool_context and len(tool_context.strip()) > 40):
+            system += (
+                "\nEvidence looks thin or empty. Prefer: "
+                "\"I couldn't verify that live right now.\""
+            )
+
+    # Deep ThinkMesh only for reasoning — never for live facts or library summarize
+    if (
+        (route.mode == TaskMode.DEEP or route.use_thinkmesh)
+        and not live_fact
+        and not route_meta.get("library")
+    ):
         try:
-            think_text, think_meta = _thinkmesh_sync(message)
+            think_task = message
+            if tool_context:
+                think_task = (
+                    f"{message}\n\nEvidence (use if relevant):\n{tool_context}"
+                )
+            think_text, think_meta = _thinkmesh_sync(
+                think_task,
+                model=model,
+                ollama_url=normalize_ollama_url(ollama_url),
+            )
             route_meta["thinkmesh"] = think_meta
             if think_text:
                 system += (
-                    "\n\nDeep ThinkMesh analysis (ground truth for reasoning):\n"
+                    "\n\nDeep ThinkMesh analysis (reasoning aid, not live facts):\n"
                     + think_text
                 )
                 tools_used.append(
@@ -205,19 +401,22 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
                         "ok": True,
                         "tool": "thinkmesh",
                         "summary": think_text[:400],
+                        "engine": (think_meta or {}).get("engine"),
+                        "strategy": (think_meta or {}).get("strategy"),
                     }
                 )
         except Exception as exc:
             route_meta["thinkmesh_error"] = str(exc)
 
     parts = [system, ""]
-    for turn in history[-12:]:
-        if not isinstance(turn, dict):
-            continue
-        role = "User" if turn.get("role") == "user" else companion
-        text = (turn.get("text") or "").strip()
-        if text:
-            parts.append(f"{role}: {text}")
+    if not live_fact:
+        for turn in history[-8:]:
+            if not isinstance(turn, dict):
+                continue
+            role = "User" if turn.get("role") == "user" else companion
+            text = (turn.get("text") or "").strip()
+            if text:
+                parts.append(f"{role}: {text}")
     parts.append(f"User: {message}")
     parts.append(f"{companion}:")
     prompt = "\n".join(parts)
@@ -226,12 +425,11 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
         ollama_url,
         model,
         prompt,
-        temperature=0.55 if route.mode == TaskMode.DEEP else 0.7,
+        temperature=0.35 if live_fact else (0.55 if route.mode == TaskMode.DEEP else 0.7),
         num_predict=min(int(route.max_tokens or 420) + 80, 700),
     )
     if err:
         if tool_context:
-            # Never return a raw tool dump as the only reply — keep it short.
             summary = str(tool_context).strip()
             if len(summary) > 360:
                 summary = summary[:357] + "…"
@@ -243,25 +441,23 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
             )
             return {"ok": False, "error": err, "tools": tools_used, "route": route_meta}
 
+    # Allow TOOL: follow-up when live research still empty / model asks again
     directive = wow_tools.parse_tool_directive(reply)
-    if directive and not intent:
+    if directive and (not intent or live_fact):
         name, args = directive
         result = wow_tools.run_tool(name, args)
         tools_used.append(result)
         tool_context = result.get("summary") or result.get("error") or ""
         follow = (
-            system
-            + "\n\nTool result (ground truth):\n"
-            + tool_context
-            + "\n\nNow answer the user in character in 2–5 short sentences. "
-            "Start with one spoken-friendly sentence. Do NOT output another TOOL: line.\n\n"
-            + f"User: {message}\n{companion}:"
+            f"You are {companion}. Answer ONLY from this evidence. "
+            "If empty, say you could not verify. No TOOL: lines.\n\n"
+            f"Evidence:\n{tool_context}\n\n"
+            f"User: {message}\n{companion}:"
         )
-        reply2, err2 = _ollama_generate(ollama_url, model, follow, temperature=0.65)
+        reply2, err2 = _ollama_generate(ollama_url, model, follow, temperature=0.35)
         if not err2 and reply2:
             reply = wow_tools.strip_tool_directive(reply2)
         else:
-            # Fallback: short paraphrase of tool result, not the full dump
             brief = str(tool_context or "").strip()
             if len(brief) > 280:
                 brief = brief[:277] + "…"
@@ -269,11 +465,42 @@ def chat_with_tools(body: Dict[str, Any]) -> Dict[str, Any]:
     else:
         reply = wow_tools.strip_tool_directive(reply) or reply
 
-    speak_line = spoken_passage(reply, max_chars=520)
+    # Light SourceDiff-style gate for live facts
+    if live_fact and tool_context:
+        if not wow_tools.claims_supported_by_evidence(reply, tool_context):
+            # One retry grounded harder
+            retry_prompt = (
+                f"You are {companion}. Rewrite using ONLY this evidence. "
+                "If the evidence does not contain the answer, say you could not "
+                "verify live — do not invent.\n\n"
+                f"Evidence:\n{tool_context}\n\n"
+                f"User: {message}\n{companion}:"
+            )
+            reply2, err2 = _ollama_generate(
+                ollama_url, model, retry_prompt, temperature=0.2, num_predict=280
+            )
+            if not err2 and reply2:
+                reply = wow_tools.strip_tool_directive(reply2)
+            if not wow_tools.claims_supported_by_evidence(reply, tool_context):
+                reply = (
+                    "I couldn't verify that from live sources just now. "
+                    "Try asking again, or say “search …” with more detail "
+                    "(year, teams, or tournament)."
+                )
+                route_meta["escalated"] = True
+    elif live_fact and not (tool_context and len(str(tool_context).strip()) > 40):
+        reply = (
+            "I couldn't find live sources for that yet. "
+            "Check the PC has network search available, or try "
+            "“search FIFA World Cup final results”."
+        )
+        route_meta["escalated"] = True
+
+    speak_max = 2800 if route_meta.get("library") and not route_meta["library"].get("empty") else 520
+    speak_line = spoken_passage(reply, max_chars=speak_max)
     if greet and not speak_line:
         speak_line = greeting_speak_line(companion)
     elif not speak_line:
-        # Prefer silence over speaking tool/prompt garbage
         speak_line = ""
 
     shared_session.append_turn(
@@ -360,6 +587,7 @@ def companion_profile_get() -> Dict[str, Any]:
         "has_clone": bool(
             prefs.get("clone_wav") and Path(str(prefs.get("clone_wav"))).is_file()
         ),
+        "storyteller_name": prefs.get("storyteller_name") or "Bedtime Bear",
         "google_linked": bool(prefs.get("google_linked")),
         "google_email": prefs.get("google_email"),
         "google_name": prefs.get("google_name"),
@@ -397,6 +625,10 @@ def companion_profile_save(body: Dict[str, Any]) -> Dict[str, Any]:
             prefs["clone_wav"] = str(cw)
         else:
             prefs.pop("clone_wav", None)
+    if "storyteller_name" in body:
+        sn = str(body.get("storyteller_name") or "").strip()[:40]
+        # Never store celebrity-style instructions — user-chosen character only
+        prefs["storyteller_name"] = sn or "Bedtime Bear"
     existing["user_id"] = existing.get("user_id") or "default"
     existing["preferences"] = prefs
     existing["personality_mode"] = tone
@@ -692,6 +924,10 @@ def _label_engine(
         return "kokoro", False
     if mode == "authentic" and clone_ready:
         return "xtts-clone", True
+    if mode == "storyteller" and clone_ready:
+        return "storyteller-clone", True
+    if mode == "storyteller":
+        return "storyteller", False
     if mode in ("", "fast") and not force_edge and clone_ready:
         # Legacy path: clone used when configured and not forced to edge.
         return "xtts-clone", True
@@ -840,6 +1076,9 @@ class PWAHandler(SimpleHTTPRequestHandler):
             return self._json(200, household.peek_invite(token))
         if route == "/api/offline-pack":
             return self._json(200, light_pack.build_pack())
+        if route == "/api/library":
+            mid = (qs.get("member_id") or ["primary"])[0]
+            return self._json(200, family_library.list_docs(mid))
         if route == "/api/remote-access":
             port = 8765
             try:
@@ -915,6 +1154,12 @@ class PWAHandler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
             return self._json(200, light_pack.drain_queue())
+        if route == "/api/library/upload":
+            return self._library_upload()
+        if route == "/api/library/delete":
+            return self._library_delete()
+        if route == "/api/library/update":
+            return self._library_update()
         return self._json(
             405,
             {
@@ -923,6 +1168,146 @@ class PWAHandler(SimpleHTTPRequestHandler):
                 "hint": "Use the documented GET/POST route for this API",
             },
         )
+
+    def do_DELETE(self):
+        route = self.path.split("?", 1)[0]
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        if route.startswith("/api/library/"):
+            doc_id = route[len("/api/library/") :].strip("/")
+            if not doc_id or doc_id in ("upload", "delete"):
+                return self._json(400, {"ok": False, "error": "doc id required"})
+            mid = (qs.get("member_id") or ["primary"])[0]
+            # Also accept JSON body member_id
+            try:
+                body, _ = self._read_json_body()
+                if body and body.get("member_id"):
+                    mid = str(body.get("member_id"))
+            except Exception:
+                pass
+            result = family_library.delete_doc(doc_id, mid)
+            return self._json(200 if result.get("ok") else 400, result)
+        return self._json(405, {"ok": False, "error": f"DELETE not allowed for {route}"})
+
+    def _library_delete(self) -> None:
+        body, err = self._read_json_body()
+        if err or body is None:
+            return self._json(400, {"ok": False, "error": err or "invalid JSON"})
+        doc_id = str(body.get("id") or body.get("doc_id") or "").strip()
+        mid = str(body.get("member_id") or "primary").strip() or "primary"
+        if not doc_id:
+            return self._json(400, {"ok": False, "error": "id required"})
+        result = family_library.delete_doc(doc_id, mid)
+        return self._json(200 if result.get("ok") else 400, result)
+
+    def _library_update(self) -> None:
+        body, err = self._read_json_body()
+        if err or body is None:
+            return self._json(400, {"ok": False, "error": err or "invalid JSON"})
+        doc_id = str(body.get("id") or body.get("doc_id") or "").strip()
+        mid = str(body.get("member_id") or "primary").strip() or "primary"
+        if not doc_id:
+            return self._json(400, {"ok": False, "error": "id required"})
+        result = family_library.update_doc(
+            doc_id,
+            mid,
+            tags=body.get("tags"),
+            title=body.get("title"),
+            visibility=body.get("visibility"),
+        )
+        return self._json(200 if result.get("ok") else 400, result)
+
+    def _library_upload(self) -> None:
+        """Accept JSON {file_b64, filename, title, visibility, member_id} or multipart."""
+        ctype = (self.headers.get("Content-Type") or "").lower()
+        member_id = "primary"
+        title = ""
+        visibility = "family"
+        filename = "document.txt"
+        raw: bytes = b""
+
+        if "multipart/form-data" in ctype:
+            parsed = self._parse_multipart()
+            if not parsed:
+                return self._json(400, {"ok": False, "error": "invalid multipart body"})
+            raw = parsed.get("file") or parsed.get("document") or b""
+            filename = str(parsed.get("filename") or filename)
+            title = str(parsed.get("title") or "")
+            visibility = str(parsed.get("visibility") or "family")
+            member_id = str(parsed.get("member_id") or "primary")
+            tags_raw = parsed.get("tags") or ""
+        else:
+            body, err = self._read_json_body()
+            if err or body is None:
+                return self._json(400, {"ok": False, "error": err or "invalid JSON"})
+            b64 = body.get("file_b64") or body.get("data") or ""
+            if isinstance(b64, str) and "," in b64 and b64.strip().startswith("data:"):
+                b64 = b64.split(",", 1)[1]
+            if not b64:
+                return self._json(400, {"ok": False, "error": "file_b64 required"})
+            try:
+                raw = base64.b64decode(b64)
+            except Exception:
+                return self._json(400, {"ok": False, "error": "invalid base64 file"})
+            filename = str(body.get("filename") or filename)
+            title = str(body.get("title") or "")
+            visibility = str(body.get("visibility") or "family")
+            member_id = str(body.get("member_id") or "primary")
+            tags_raw = body.get("tags")
+
+        if not raw:
+            return self._json(400, {"ok": False, "error": "empty file"})
+        result = family_library.ingest_bytes(
+            raw,
+            filename=filename,
+            title=title,
+            member_id=member_id,
+            visibility=visibility,
+            tags=tags_raw,
+        )
+        return self._json(200 if result.get("ok") else 400, result)
+
+    def _parse_multipart(self) -> Optional[Dict[str, Any]]:
+        """Minimal multipart/form-data parser for library uploads."""
+        ctype = self.headers.get("Content-Type") or ""
+        m = re.search(r"boundary=([^;]+)", ctype, flags=re.I)
+        if not m:
+            return None
+        boundary = m.group(1).strip().strip('"')
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > 14 * 1024 * 1024:
+            return None
+        body = self.rfile.read(length)
+        sep = ("--" + boundary).encode("utf-8")
+        parts = body.split(sep)
+        out: Dict[str, Any] = {}
+        for part in parts:
+            if not part or part in (b"--\r\n", b"--", b"--\r\n--"):
+                continue
+            if part.startswith(b"\r\n"):
+                part = part[2:]
+            if part.endswith(b"\r\n"):
+                part = part[:-2]
+            if part == b"--" or part.startswith(b"--"):
+                continue
+            header_blob, _, content = part.partition(b"\r\n\r\n")
+            if not content and b"\n\n" in part:
+                header_blob, _, content = part.partition(b"\n\n")
+            headers = header_blob.decode("utf-8", errors="replace")
+            # Strip trailing boundary epilogue
+            if content.endswith(b"\r\n"):
+                content = content[:-2]
+            name_m = re.search(r'name="([^"]+)"', headers, flags=re.I)
+            if not name_m:
+                continue
+            name = name_m.group(1)
+            file_m = re.search(r'filename="([^"]*)"', headers, flags=re.I)
+            if file_m:
+                out["file"] = content
+                out["filename"] = file_m.group(1) or "document.txt"
+            else:
+                out[name] = content.decode("utf-8", errors="replace")
+        return out or None
 
     def _family_invite_create(self) -> None:
         body, err = self._read_json_body()
@@ -1295,16 +1680,24 @@ class PWAHandler(SimpleHTTPRequestHandler):
         if not text:
             return self._json(400, {"error": "text required"})
 
-        # Normalize the requested engine. PWA sends natural|fast|authentic|auto;
+        # Normalize the requested engine. PWA sends natural|fast|authentic|auto|storyteller;
         # "edge" is a legacy alias for fast. Previews always use fast for speed.
         raw_engine = str(body.get("engine") or "").strip().lower()
         engine = {"edge": "fast"}.get(raw_engine, raw_engine)
         preview = bool(body.get("preview"))
         if preview:
             engine = "fast"
-        force_edge = bool(
-            body.get("force_edge") or preview or engine == "fast"
-        )
+        # Storyteller = parent's own clone with a mild distinct shift
+        if engine == "storyteller":
+            force_edge = False
+            if rate_bias is None:
+                rate_bias = -8
+            if pitch_bias is None:
+                pitch_bias = 5
+        else:
+            force_edge = bool(
+                body.get("force_edge") or preview or engine == "fast"
+            )
         max_chars = 180 if preview else 520
         if body.get("max_chars") is not None:
             try:
@@ -1512,7 +1905,8 @@ def main() -> int:
     print("Voice: POST /api/speak  GET /api/voice-status (Edge / XTTS on this PC)")
     cat = wow_tools.catalog()
     print(
-        f"Tools: GET /api/tools · POST /api/chat · search={cat.get('search_provider')} "
+        f"Tools: GET /api/tools · POST /api/chat · Library: GET/POST /api/library* · "
+        f"search={cat.get('search_provider')} "
         f"({len(cat.get('tools') or [])} tools)"
     )
     gstat = google_oauth.status()
