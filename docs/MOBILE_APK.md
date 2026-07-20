@@ -13,7 +13,8 @@ Local-first phone app that wraps the PWA and talks to your **PC brain**
 ## Prerequisites
 
 1. **Node.js 20+** (already used for this scaffold)
-2. **JDK 17** + **Android Studio** (Ladybug or newer) with Android SDK 35
+2. **JDK 21** + **Android Studio** (Ladybug or newer) with Android SDK 35
+   (Capacitor 7 expects Java 21 for the Android build)
 3. PC and phone on the same Wi‑Fi (or Tailscale)
 4. PC brain running:
 
